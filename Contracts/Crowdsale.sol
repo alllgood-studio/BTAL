@@ -38,52 +38,6 @@ library SafeMath {
         return c;
     }
 
-    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b != 0, "SafeMath: modulo by zero");
-        return a % b;
-    }
-}
-
-/**
- * @title Ownable
- * @dev The Ownable contract has an owner address, and provides basic authorization control
- * functions, this simplifies the implementation of "user permissions".
- */
-contract Ownable {
-
-    address internal _owner;
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    constructor(address initialOwner) internal {
-        _owner = initialOwner;
-        emit OwnershipTransferred(address(0), _owner);
-    }
-
-    function owner() public view returns (address) {
-        return _owner;
-    }
-
-    modifier onlyOwner() {
-        require(isOwner(), "Caller is not the owner");
-        _;
-    }
-
-    function isOwner() public view returns (bool) {
-        return msg.sender == _owner;
-    }
-
-    function renounceOwnership() public onlyOwner {
-        emit OwnershipTransferred(_owner, address(0));
-        _owner = address(0);
-    }
-
-    function transferOwnership(address newOwner) public onlyOwner {
-        require(newOwner != address(0), "New owner is the zero address");
-        emit OwnershipTransferred(_owner, newOwner);
-        _owner = newOwner;
-    }
-
 }
 
 /**
@@ -104,6 +58,34 @@ interface BTLToken {
  */
 interface Exchange {
     function finish() external;
+}
+
+/**
+ * @title PriceReceiver interface
+ * @dev Inherit from PriceReceiver to use the PriceProvider contract.
+ */
+interface PriceReceiver {
+    function setETHPrice(uint256 newPrice) external;
+    function setDecimals(uint256 newDecimals) external;
+    function setEthPriceProvider(address provider) external;
+}
+
+/**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ */
+contract ReentrancyGuard {
+    uint256 private _guardCounter;
+
+    constructor () internal {
+        _guardCounter = 1;
+    }
+
+    modifier nonReentrant() {
+        _guardCounter += 1;
+        uint256 localCounter = _guardCounter;
+        _;
+        require(localCounter == _guardCounter, "ReentrancyGuard: reentrant call");
+    }
 }
 
 /**
@@ -190,40 +172,6 @@ contract WhitelistedRole {
 }
 
 /**
- * @title PriceReceiver interface
- * @dev Inherit from PriceReceiver to use the PriceProvider contract.
- */
-contract PriceReceiver {
-
-    address public ethPriceProvider;
-
-    function setETHPrice(uint256 newPrice) external;
-
-    function setDecimals(uint256 newDecimals) external;
-
-    function setEthPriceProvider(address provider) external;
-
-}
-
-/**
- * @dev Contract module that helps prevent reentrant calls to a function.
- */
-contract ReentrancyGuard {
-    uint256 private _guardCounter;
-
-    constructor () internal {
-        _guardCounter = 1;
-    }
-
-    modifier nonReentrant() {
-        _guardCounter += 1;
-        uint256 localCounter = _guardCounter;
-        _;
-        require(localCounter == _guardCounter, "ReentrancyGuard: reentrant call");
-    }
-}
-
-/**
  * @title Crowdsale contract
  */
 contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
@@ -234,15 +182,18 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
 
     // Address where funds are collected
     address payable private _wallet;
-    address payable private _reserveAddr;
+    address payable private _exchange;
     address private _teamAddr;
-    Exchange private _exchange;
+    address private _priceProvider;
 
-    // Amount of wei raised
-    uint256 private _weiRaised;
-    uint256 private _tokensPurchased;
-    uint256 private _reserved;
-    uint256 private _reserveLimit;
+    // stats
+    uint256 private _weiRaised; // (ETH)
+    uint256 private _tokensPurchased; // (Tokens)
+    uint256 private _reserved; // (USD)
+
+    // reserve variables
+    uint256 private _reserveTrigger = 100000000 * (10**18); // (Tokens)
+    uint256 private _reserveLimit = 150000; // (USD)
 
     // Price of 1 ether in USD Cents
     uint256 private _currentETHPrice;
@@ -255,49 +206,58 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     uint256 private _bonusPercent;
 
     // Minimum amount of wei to invest
-    uint256 private _minimum = 0.1 ether;
+    uint256 private _minimum = 0.1 ether; // (ETH)
 
     // Limit of emission of crowdsale
-    uint256 private _hardcap;
+    uint256 private _hardcap; // (Tokens)
 
     // ending time (UNIX)
-    uint256 private _endTime;
+    uint256 private _endTime; // (UNIX)
 
+    // states
     enum State {OFF, ON}
+    State private reserve = State.OFF;
+    State private whiteList = State.OFF;
 
-    State public reserve = State.OFF;
-    State public whiteList = State.OFF;
-
+    // events
     event TokensPurchased(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event TokensSent(address indexed sender, address indexed beneficiary, uint256 amount);
     event NewETHPrice(uint256 oldValue, uint256 newValue, uint256 decimals);
+    event Payout(address indexed recipient, uint256 weiAmount, uint256 usdAmount);
 
+    // time controller
     modifier active() {
         require(block.timestamp <= _endTime);
         _;
     }
 
+    // token admin checker
     modifier onlyAdmin() {
         require(_token.isAdmin(msg.sender));
         _;
     }
 
     /**
-     * @param rate Number of token units a buyer gets per wei
-     * @param initialETHPrice Price of Ether in USD Cents
-     * @param wallet Address where collected funds will be forwarded to
-     * @param token Address of the token being sold
+     * @dev constructor function
      */
-    constructor (uint256 rate, uint256 initialETHPrice, address payable wallet, BTLToken token) public {
+    constructor(uint256 rate, uint256 initialETHPrice, uint256 decimals, address payable wallet, address teamAddr, address payable exchange, BTLToken token, uint256 endTime, uint256 hardcap) public {
         require(rate != 0, "Rate is 0");
         require(initialETHPrice != 0, "Initial ETH price is 0");
         require(wallet != address(0), "Wallet is the zero address");
+        require(teamAddr != address(0), "teamAddr is the zero address");
         require(address(token) != address(0), "Token is the zero address");
+        require(endTime != 0, "EndTime is 0");
+        require(hardcap != 0, "HardCap is 0");
 
         _rate = rate;
         _currentETHPrice = initialETHPrice;
+        _decimals = decimals;
         _wallet = wallet;
+        _teamAddr = teamAddr;
+        _exchange = exchange;
         _token = token;
+        _endTime = endTime;
+        _hardcap = hardcap;
     }
 
     /**
@@ -323,82 +283,120 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
 
         uint256 weiAmount = msg.value;
 
-        uint256 tokens = weiToTokens(weiAmount);
+        uint256 tokens = weiToTokens(weiAmount).mul(100 + _bonusPercent).div(100);
 
         if (_tokensPurchased.add(tokens) > _hardcap) {
-            weiAmount = tokensToWei((_hardcap.sub(_tokensPurchased)).div(100 + _bonusPercent).mul(100));
+            weiAmount = tokensToWei((_hardcap.sub(_tokensPurchased)).mul(100).div(100 + _bonusPercent));
             tokens = _hardcap.sub(_tokensPurchased);
             msg.sender.transfer(msg.value.sub(weiAmount));
         }
 
-        if (_tokensPurchased.add(tokens) > 100000000 * (10**18) && reserve == State.OFF) {
+        if (
+            _tokensPurchased < _reserveTrigger
+            && _tokensPurchased.add(tokens) > _reserveTrigger
+            && _reserved < _reserveLimit
+            ) {
             reserve = State.ON;
-            _wallet.transfer(tokensToWei((100000000 * (10**18)) - _tokensPurchased));
-            refund(weiAmount.sub(tokensToWei((100000000 * (10**18)) - _tokensPurchased)));
+            _wallet.transfer(tokensToWei((_reserveTrigger) - _tokensPurchased));
+            emit Payout(_wallet, tokensToWei((_reserveTrigger) - _tokensPurchased), tokensToUSD((_reserveTrigger) - _tokensPurchased));
+            refund(weiAmount.sub(tokensToWei((_reserveTrigger) - _tokensPurchased)));
         } else {
             refund(weiAmount);
         }
 
-        uint256 bonus = tokens.mul(_bonusPercent).div(100);
-        _token.mint(beneficiary, tokens + bonus);
 
-        _tokensPurchased += tokens + bonus;
+        _token.mint(beneficiary, tokens);
+
+        _tokensPurchased += tokens;
         _weiRaised = _weiRaised.add(weiAmount);
 
         emit TokensPurchased(msg.sender, beneficiary, weiAmount, tokens);
 
     }
 
+    /**
+     * @dev Send tokens to recipient.
+     * Available only to the admin and owner.
+     * @param recipient address to send tokens to.
+     * @param amount amount of tokens.
+     */
     function sendTokens(address recipient, uint256 amount) public onlyAdmin {
         require(recipient != address(0));
         _token.mint(recipient, amount);
 
+        _tokensPurchased += amount;
         emit TokensSent(msg.sender, recipient, amount);
     }
 
+    /**
+     * @dev Send fixed amount of tokens to list of recipients.
+     * Available only to the admin and owner.
+     * @param recipients addresses to send tokens to.
+     * @param amount amount of tokens.
+     */
     function sendTokensToList(address[] memory recipients, uint256 amount) public onlyAdmin {
         for (uint256 i = 0; i < recipients.length; i++) {
             require(recipients[i] != address(0), "Recipient is the zero address");
             _token.mint(recipients[i], amount);
             emit TokensSent(msg.sender, recipients[i], amount);
         }
+        _tokensPurchased += amount * recipients.length;
     }
 
-    function sendTokensPerWei(address recipient, uint256 weiAmount) public onlyAdmin {
-        require(recipient != address(0));
-        _token.mint(recipient, weiToTokens(weiAmount));
+    /**
+     * @dev Send tokens to recipient per specified wei amount.
+     * Available only to the admin and owner.
+     * @param recipient address to send tokens to.
+     * @param weiAmount amount of wei.
+     */
+     function sendTokensPerWei(address recipient, uint256 weiAmount) public onlyAdmin {
+         require(recipient != address(0));
+         uint256 tokens = weiToTokens(weiAmount);
+         _token.mint(recipient, tokens);
 
-        emit TokensSent(msg.sender, recipient, weiToTokens(weiAmount));
-    }
+         _tokensPurchased += tokens;
+         emit TokensSent(msg.sender, recipient, tokens);
+     }
 
-    function refund(uint256 weiAmount) internal {
-        address payable recipient;
-        if (reserve == State.OFF) {
-            recipient = _wallet;
-        } else {
-            uint256 usdAmount = weiToUSD(weiAmount);
+    /**
+     * @dev internal function to allocate funds.
+     */
+     function refund(uint256 weiAmount) internal {
+         address payable recipient;
+         if (reserve == State.OFF) {
+             _wallet.transfer(weiAmount);
+             emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
+         } else {
+             uint256 usdAmount = weiToUSD(weiAmount);
 
-            if (_reserved.add(usdAmount) >= _reserveLimit) {
-                _wallet.transfer(weiAmount - USDToWei(_reserveLimit - _reserved));
-                weiAmount = USDToWei(_reserveLimit - _reserved);
-                _reserved = _reserveLimit;
-            } else {
-                _reserved = _reserved.add(usdAmount);
-                recipient = _reserveAddr;
-            }
+             if (_reserved.add(usdAmount) >= _reserveLimit) {
+                 _wallet.transfer(weiAmount - USDToWei(_reserveLimit - _reserved));
+                 emit Payout(_wallet, weiAmount - USDToWei(_reserveLimit - _reserved), weiToUSD(weiAmount) - (_reserveLimit - _reserved));
+                 weiAmount = USDToWei(_reserveLimit - _reserved);
+                 _exchange.transfer(weiAmount);
+                 emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
+                 _reserved = _reserveLimit;
+                 reserve = State.OFF;
+             } else {
+                 _reserved = _reserved.add(usdAmount);
+                 _exchange.transfer(weiAmount);
+                 emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
+             }
+         }
+     }
 
-        }
-
-        recipient.transfer(weiAmount);
-    }
-
+    /**
+     * @dev finish crowdsale.
+     * Available only to the admin and owner.
+     * Can be called only if hardcap is reached ot ending time has passed.
+     */
     function finishSale() public onlyAdmin {
-        require(_tokensPurchased == _hardcap || block.timestamp >= _endTime);
+        require(_tokensPurchased >= _hardcap || block.timestamp >= _endTime);
 
         _token.mint(_wallet, _token.hardcap().sub(_tokensPurchased));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
-        _exchange.finish();
+        Exchange(_exchange).finish();
     }
 
     /**
@@ -407,16 +405,16 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      * @return Number of tokens that can be purchased with the specified weiAmount
      */
     function weiToTokens(uint256 weiAmount) public view returns(uint256) {
-        return weiAmount.mul(_currentETHPrice).mul(_rate).div(_decimals).div(1 ether);
+        return weiAmount.mul(_currentETHPrice).mul(_rate).div(10**_decimals).div(1 ether);
     }
 
     /**
-     * @dev Calculate amount of wei needed to by given amount of tokens
+     * @dev Calculate amount of wei needed to buy given amount of tokens
      * @param tokenAmount amount of tokens
      * @return wei amount that one need to send to buy the specified tokenAmount
      */
     function tokensToWei(uint256 tokenAmount) public view returns(uint256) {
-        return tokenAmount.mul(1 ether).mul(_decimals).div(_rate).div(_currentETHPrice);
+        return tokenAmount.mul(1 ether).mul(10**_decimals).div(_rate).div(_currentETHPrice);
     }
 
     /**
@@ -425,7 +423,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      * @return USD amount
      */
     function weiToUSD(uint256 weiAmount) public view returns(uint256) {
-        return weiAmount.mul(_currentETHPrice).div(_decimals).div(1 ether);
+        return weiAmount.mul(_currentETHPrice).div(10**_decimals).div(1 ether);
     }
 
     /**
@@ -434,7 +432,16 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      * @return wei amount
      */
     function USDToWei(uint256 USDAmount) public view returns(uint256) {
-        return USDAmount.mul(1 ether).mul(_decimals).div(_currentETHPrice);
+        return USDAmount.mul(1 ether).mul(10**_decimals).div(_currentETHPrice);
+    }
+
+    /**
+     * @dev Calculate amount of USD needed to buy given amount of tokens
+     * @param tokenAmount amount of tokens
+     * @return USD amount that one need to send to buy the specified tokenAmount
+     */
+    function tokensToUSD(uint256 tokenAmount) public view returns(uint256) {
+        return weiToUSD(tokensToWei(tokenAmount));
     }
 
     /**
@@ -456,7 +463,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     function setEthPriceProvider(address provider) external onlyAdmin {
         require(provider != address(0), "New parameter value is the zero address");
 
-        ethPriceProvider = provider;
+        _priceProvider = provider;
     }
 
     /**
@@ -471,13 +478,24 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
+     * @dev Function to change the Exchange address.
+     * Available only to the admin and owner.
+     * @param newExchange new address.
+     */
+    function setExchangeAddr(address payable newExchange) external onlyAdmin {
+        require(newExchange != address(0), "New parameter value is the zero address");
+
+        _exchange = newExchange;
+    }
+
+    /**
      * @dev Function to change the ETH Price.
      * Available only to the admin and owner and to the PriceProvider.
      * @param newPrice amount of USD Cents for 1 ether.
      */
     function setETHPrice(uint256 newPrice) external {
         require(newPrice != 0, "New parameter value is 0");
-        require(msg.sender == ethPriceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
+        require(msg.sender == _priceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
 
         emit NewETHPrice(_currentETHPrice, newPrice, _decimals);
         _currentETHPrice = newPrice;
@@ -490,7 +508,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function setDecimals(uint256 newDecimals) external {
         require(newDecimals != 0, "New parameter value is 0");
-        require(msg.sender == ethPriceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
+        require(msg.sender == _priceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
 
         _decimals = newDecimals;
     }
@@ -529,6 +547,39 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
+     * @dev Function to change the minimum amount (wei).
+     * Available only to the admin and owner.
+     * @param newMinimum new minimum value (wei).
+     */
+    function setMinimum(uint256 newMinimum) external onlyAdmin {
+        require(newMinimum != 0, "New parameter value is 0");
+
+        _minimum = newMinimum;
+    }
+
+    /**
+     * @dev Function to change the reserve Limit (USD).
+     * Available only to the admin and owner.
+     * @param newResLimitUSD new value (USD).
+     */
+    function setReserveLimit(uint256 newResLimitUSD) external onlyAdmin {
+        require(newResLimitUSD != 0, "New parameter value is 0");
+
+        _reserveLimit = newResLimitUSD;
+    }
+
+    /**
+     * @dev Function to change the reserve trigger value (tokens).
+     * Available only to the admin and owner.
+     * @param newReserveTrigger new value (tokens).
+     */
+    function setReserveTrigger(uint256 newReserveTrigger) external onlyAdmin {
+        require(newReserveTrigger != 0, "New parameter value is 0");
+
+        _reserveTrigger = newReserveTrigger;
+    }
+
+    /**
      * @dev Function to change activate/deactivate whitelist.
      * Available only to the admin and owner.
      */
@@ -552,6 +603,8 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
 
     }
 
+
+
     /**
      * @return the token being sold.
      */
@@ -567,6 +620,20 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
+     * @return the address of exchange contract.
+     */
+    function exchange() public view returns (address payable) {
+        return _exchange;
+    }
+
+    /**
+     * @return the priceProvider address.
+     */
+    function priceProvider() public view returns (address) {
+        return _priceProvider;
+    }
+
+    /**
      * @return the number of token units a buyer gets per wei.
      */
     function rate() public view returns (uint256) {
@@ -578,6 +645,13 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function currentETHPrice() public view returns (uint256 price, uint256 decimals) {
         return(_currentETHPrice, _decimals);
+    }
+
+    /**
+     * @return bonusPercent.
+     */
+    function bonusPercent() public view returns (uint256) {
+        return _bonusPercent;
     }
 
     /**
@@ -606,6 +680,41 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function reserveLimit() public view returns (uint256) {
         return _reserveLimit;
+    }
+
+    /**
+     * @return the reserved limit in USD.
+     */
+    function reserveTrigger() public view returns (uint256) {
+        return _reserveTrigger;
+    }
+
+    /**
+     * @return the hardcap.
+     */
+    function hardcap() public view returns (uint256) {
+        return _hardcap;
+    }
+
+    /**
+     * @return the ending UNIX time.
+     */
+    function endTime() public view returns (uint256) {
+        return _endTime;
+    }
+
+    /**
+     * @return true if whiteList is activated.
+     */
+    function whitelist() public view returns (bool) {
+        return whiteList == State.ON;
+    }
+
+    /**
+     * @return the amount of purchased tokens.
+     */
+    function tokensPurchased() public view returns (uint256) {
+        return _tokensPurchased;
     }
 
 }

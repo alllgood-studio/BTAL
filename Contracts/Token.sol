@@ -22,6 +22,41 @@ library SafeMath {
 }
 
 /**
+ * @title Roles
+ * @dev Library for managing addresses assigned to a Role.
+ */
+library Roles {
+    struct Role {
+        mapping (address => bool) bearer;
+    }
+
+    /**
+     * @dev Give an account access to this role.
+     */
+    function add(Role storage role, address account) internal {
+        require(!has(role, account), "Roles: account already has role");
+        role.bearer[account] = true;
+    }
+
+    /**
+     * @dev Remove an account's access to this role.
+     */
+    function remove(Role storage role, address account) internal {
+        require(has(role, account), "Roles: account does not have role");
+        role.bearer[account] = false;
+    }
+
+    /**
+     * @dev Check if an account has this role.
+     * @return bool
+     */
+    function has(Role storage role, address account) internal view returns (bool) {
+        require(account != address(0), "Roles: account is the zero address");
+        return role.bearer[account];
+    }
+}
+
+/**
  * @title Ownable
  * @dev The Ownable contract has an owner address, and provides basic authorization control
  * functions, this simplifies the implementation of "user permissions".
@@ -63,41 +98,6 @@ contract Ownable {
 
 }
 
-/**
- * @title Roles
- * @dev Library for managing addresses assigned to a Role.
- */
-library Roles {
-    struct Role {
-        mapping (address => bool) bearer;
-    }
-
-    /**
-     * @dev Give an account access to this role.
-     */
-    function add(Role storage role, address account) internal {
-        require(!has(role, account), "Roles: account already has role");
-        role.bearer[account] = true;
-    }
-
-    /**
-     * @dev Remove an account's access to this role.
-     */
-    function remove(Role storage role, address account) internal {
-        require(has(role, account), "Roles: account does not have role");
-        role.bearer[account] = false;
-    }
-
-    /**
-     * @dev Check if an account has this role.
-     * @return bool
-     */
-    function has(Role storage role, address account) internal view returns (bool) {
-        require(account != address(0), "Roles: account is the zero address");
-        return role.bearer[account];
-    }
-}
-
 contract AdminRole is Ownable {
     using Roles for Roles.Role;
 
@@ -126,6 +126,34 @@ contract AdminRole is Ownable {
     }
 }
 
+contract MinterRole is Ownable {
+    using Roles for Roles.Role;
+
+    event MinterAdded(address indexed account);
+    event MinterRemoved(address indexed account);
+
+    Roles.Role private _minters;
+
+    modifier onlyMinter() {
+        require(isMinter(msg.sender) || isOwner(msg.sender), "Sender has no permission");
+        _;
+    }
+
+    function isMinter(address account) public view returns (bool) {
+        return(_minters.has(account) || isOwner(account));
+    }
+
+    function addMinter(address account) public onlyOwner {
+        _minters.add(account);
+        emit MinterAdded(account);
+    }
+
+    function removeMinter(address account) public onlyOwner {
+        _minters.remove(account);
+        emit MinterRemoved(account);
+    }
+}
+
 /**
  * @title ERC20 interface
  * @dev see https://eips.ethereum.org/EIPS/eip-20
@@ -139,6 +167,26 @@ interface IERC20 {
     function allowance(address owner, address spender) external view returns (uint256);
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
+/**
+ * @title Crowdsale interface
+ */
+interface Crowdsale {
+    function endTime() external view returns(uint256);
+    function whitelisted(address account) external view returns(bool);
+    function reserved() external view returns(uint256);
+    function reserveLimit() external view returns(uint256);
+    function tokensPurchased() external view returns (uint256);
+    function hardcap() external view returns (uint256);
+}
+
+/**
+ * @title ApproveAndCall Interface.
+ * @dev ApproveAndCall system allows to communicate with smart-contracts.
+ */
+interface ApproveAndCallFallBack {
+    function receiveApproval(address from, uint256 amount, address token, bytes calldata extraData) external;
 }
 
 /**
@@ -220,59 +268,18 @@ contract ERC20 is IERC20 {
 
 }
 
-contract MinterRole is Ownable {
-    using Roles for Roles.Role;
-
-    event MinterAdded(address indexed account);
-    event MinterRemoved(address indexed account);
-
-    Roles.Role private _minters;
-
-    modifier onlyMinter() {
-        require(isMinter(msg.sender), "MinterRole: caller does not have the Minter role");
-        _;
-    }
-
-    function isMinter(address account) public view returns (bool) {
-        return _minters.has(account);
-    }
-
-    function addMinter(address account) public onlyOwner {
-        _minters.add(account);
-        emit MinterAdded(account);
-    }
-
-    function removeMinter(address account) public onlyOwner {
-        _minters.remove(account);
-        emit MinterRemoved(account);
-    }
-}
-
 /**
  * @dev Extension of `ERC20` that adds a set of accounts with the `MinterRole`,
  * which have permission to mint (create) new tokens as they see fit.
- *
  * At construction, the deployer of the contract is the only minter.
  */
 contract ERC20Mintable is ERC20, MinterRole {
-    /**
-     * @dev See `ERC20._mint`.
-     *
-     * Requirements:
-     *
-     * - the caller must have the `MinterRole`.
-     */
+
     function mint(address account, uint256 amount) public onlyMinter returns (bool) {
         _mint(account, amount);
         return true;
     }
-}
 
-interface Crowdsale {
-    function endTime() external view returns(uint256);
-    function whitelisted(address account) external view returns(bool);
-    function reserved() external view returns(uint256);
-    function reserveLimit() external view returns(uint256);
 }
 
 /**
@@ -280,7 +287,11 @@ interface Crowdsale {
  */
 contract LockableToken is ERC20Mintable, AdminRole {
 
+    // tokens state
     bool private _released;
+
+    // crowdsale address
+    Crowdsale private _crowdsale;
 
     // variables to store info about locked addresses
     mapping (address => bool) private _unlocked;
@@ -290,21 +301,46 @@ contract LockableToken is ERC20Mintable, AdminRole {
         uint256 time;
     }
 
+    /**
+     * @dev prevent any transfer of locked tokens.
+     */
     modifier canTransfer(address from, uint256 value) {
-        if (
-            !Crowdsale(msg.sender).whitelisted(from)
-            && Crowdsale(msg.sender).reserved() != Crowdsale(msg.sender).reserveLimit()
-        ) {
-            require(_released || isOwner(msg.sender) || _unlocked[msg.sender]);
-            if (_locked[from].amount > 0 && block.timestamp < _locked[from].time) {
-                require(value <= _locked[from].amount);
-            }
+        if (address(_crowdsale) != address(0)) {
+            if (
+                _crowdsale.whitelisted(from)
+                && _crowdsale.reserved()
+                == _crowdsale.reserveLimit()
+                )
+            { return; }
+        }
+        require(_released || isOwner(msg.sender) || _unlocked[msg.sender]);
+        if (_locked[from].amount > 0 && block.timestamp < _locked[from].time) {
+            require(value <= _locked[from].amount);
         }
         _;
     }
 
     /**
-     * @dev Allows to lock an amount of tokens of specific addresses.
+     * @dev set crowdsale address.
+     * Available only to the owner and admin.
+     * Available only when tokens are not released.
+     * @param addr crowdsale address.
+     */
+    function setCrowdsaleAddr(address addr) external onlyAdmin {
+        require(!_released);
+        if (address(_crowdsale) != address(0)) {
+            removeMinter(address(_crowdsale));
+            removeAdmin(address(_crowdsale));
+        }
+
+        addMinter(addr);
+        addAdmin(addr);
+
+        _crowdsale = Crowdsale(addr);
+    }
+
+    /**
+     * @dev lock an amount of tokens of specific addresses.
      * Available only to the owner and admin.
      * @param account address.
      * @param amount amount of tokens.
@@ -313,8 +349,13 @@ contract LockableToken is ERC20Mintable, AdminRole {
     function lock(address account, uint256 amount, uint256 time) external onlyAdmin {
         require(account != address(0) && amount != 0);
         _locked[account] = Lock(amount, time);
+        _unlocked[account] = false;
     }
 
+    /**
+     * @dev unlock tokens of specific address.
+     * Available only to the owner and admin.
+     */
     function unlock(address account) external onlyAdmin {
         require(account != address(0));
         if (_locked[account].amount > 0) {
@@ -323,8 +364,16 @@ contract LockableToken is ERC20Mintable, AdminRole {
         _unlocked[account] = true;
     }
 
+    /**
+     * @dev allow any address to transfer tokens
+     * Available only to the owner and admin.
+     */
     function release() external onlyAdmin {
-        require(block.timestamp >= Crowdsale(msg.sender).endTime());
+        if (address(_crowdsale) != address(0)) {
+            require(block.timestamp >= _crowdsale.endTime()
+                || _crowdsale.tokensPurchased() >= _crowdsale.hardcap());
+            _crowdsale = Crowdsale(address(0));
+        }
         _released = true;
     }
 
@@ -345,21 +394,18 @@ contract LockableToken is ERC20Mintable, AdminRole {
         return _released;
     }
 
-}
-
-
-/**
- * @title ApproveAndCall Interface.
- * @dev ApproveAndCall system allows to communicate with smart-contracts.
- */
-interface ApproveAndCallFallBack {
-    function receiveApproval(address from, uint256 amount, address token, bytes calldata extraData) external;
+    /**
+     * @return address of Crowdsale.
+     */
+    function crowdsale() external view returns(address) {
+        return address(_crowdsale);
+    }
 }
 
 /**
  * @title The main project contract.
  */
-contract BTLToken is ERC20Mintable {
+contract BTLToken is LockableToken {
 
     // name of the token
     string private _name = "Bital Token";
@@ -371,10 +417,10 @@ contract BTLToken is ERC20Mintable {
     // initial supply
     uint256 public constant INITIAL_SUPPLY = 250000000 * (10 ** 18);
 
-    //
+    // registered contracts (to prevent loss of token via transfer function)
     mapping (address => bool) private _contracts;
 
-    //
+    // emission limit
     uint256 private _hardcap = 1000000000 * (10 ** 18);
 
     /**
@@ -389,7 +435,7 @@ contract BTLToken is ERC20Mintable {
     }
 
     /**
-     * @dev Allows to send tokens (via Approve and TransferFrom) to other smart contract.
+     * @dev Allows to send tokens (via Approve and TransferFrom) to other smart contracts.
      * @param spender Address of smart contracts to work with.
      * @param amount Amount of tokens to send.
      * @param extraData Any extra data.
@@ -402,7 +448,11 @@ contract BTLToken is ERC20Mintable {
         return true;
     }
 
-    function addContract(address addr) external onlyOwner {
+    /**
+     * @dev Allows to register other smart contracts (to prevent loss of tokens via transfer function).
+     * @param addr Address of smart contracts to work with.
+     */
+    function registerContract(address addr) external onlyAdmin {
         require(addr != address(0));
         uint size;
         assembly { size := extcodesize(addr) }
@@ -410,13 +460,16 @@ contract BTLToken is ERC20Mintable {
         _contracts[addr] = true;
     }
 
-    function deleteContract(address addr) external onlyOwner {
-        require(addr != address(0));
+    /**
+     * @dev Allows to unregister registered smart contracts.
+     * @param addr Address of smart contracts to work with.
+     */
+    function unregisterContract(address addr) external onlyAdmin {
         _contracts[addr] = false;
     }
 
     /**
-     * @dev modified transfer function that allows to safely send tokens to exchange contract.
+     * @dev modified transfer function that allows to safely send tokens to smart contract.
      * @param to The address to transfer to.
      * @param value The amount to be transferred.
      */
@@ -454,7 +507,7 @@ contract BTLToken is ERC20Mintable {
      * @param ERC20Token Address of ERC20 token.
      * @param recipient Account to receive tokens.
      */
-    function withdrawERC20(address ERC20Token, address recipient) external onlyOwner {
+    function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
         uint256 amount = IERC20(ERC20Token).balanceOf(address(this));
         IERC20(ERC20Token).transfer(recipient, amount);
@@ -483,17 +536,17 @@ contract BTLToken is ERC20Mintable {
     }
 
     /**
-     * @return true if the address is registered as contract
-     */
-    function contracts(address addr) public view returns (bool) {
-        return _contracts[addr];
-    }
-
-    /**
      * @return emission limit
      */
     function hardcap() public view returns(uint256) {
         return _hardcap;
+    }
+
+    /**
+     * @return true if the address is registered as contract
+     */
+    function isRegistered(address addr) public view returns (bool) {
+        return _contracts[addr];
     }
 
 }
