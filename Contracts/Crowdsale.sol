@@ -51,14 +51,17 @@ interface BTLToken {
     function release() external;
     function hardcap() external view returns(uint256);
     function isAdmin(address account) external view returns (bool);
+    function isOwner(address account) external view returns (bool);
 }
 
 /**
- * @title exchange interface
+ * @title Exchange interface
  */
-interface Exchange {
-    function finish() external;
-}
+ interface Exchange {
+     function enlisted(address account) external view returns(bool);
+     function acceptETH() external payable;
+     function finish() external;
+ }
 
 /**
  * @title PriceReceiver interface
@@ -125,9 +128,8 @@ library Roles {
 
 /**
  * @title WhitelistedRole
- * @dev Whitelisted accounts have been approved by a WhitelistAdmin to perform certain actions (e.g. participate in a
- * crowdsale). This role is special in that the only accounts that can add it are WhitelistAdmins (who can also remove
- * it), and not Whitelisteds themselves.
+ * @dev Whitelisted accounts have been approved by to perform certain actions (e.g. participate in a
+ * crowdsale).
  */
 contract WhitelistedRole {
     using Roles for Roles.Role;
@@ -172,9 +174,56 @@ contract WhitelistedRole {
 }
 
 /**
+ * @title PrivateListRole
+ * @dev enlisted accounts have been approved to perform certain actions (e.g. participate in a
+ * crowdsale).
+ */
+contract PrivateListRole {
+    using Roles for Roles.Role;
+
+    event PrivateListAdded(address indexed account);
+    event PrivateListRemoved(address indexed account);
+
+    Roles.Role private _enlisted;
+
+    BTLToken private _token;
+
+    modifier onlyAdmin() {
+        require(_token.isAdmin(msg.sender));
+        _;
+    }
+
+    modifier onlyEnlisted() {
+        require(isEnlisted(msg.sender), "Sender is not Enlisted");
+        _;
+    }
+
+    function isEnlisted(address account) public view returns (bool) {
+        return _enlisted.has(account);
+    }
+
+    function addEnlisted(address account) public onlyAdmin {
+        _enlisted.add(account);
+        emit PrivateListAdded(account);
+    }
+
+    function addListToEnlisted(address[] memory accounts) public onlyAdmin {
+        for (uint256 i = 0; i < accounts.length; i++) {
+            _enlisted.add(accounts[i]);
+            emit PrivateListAdded(accounts[i]);
+        }
+    }
+
+    function removeEnlisted(address account) public onlyAdmin {
+        _enlisted.remove(account);
+        emit PrivateListRemoved(account);
+    }
+}
+
+/**
  * @title Crowdsale contract
  */
-contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
+contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     using SafeMath for uint256;
 
     // The token being sold
@@ -202,7 +251,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     // How many token units a buyer gets per 1 USD
     uint256 private _rate;
 
-    // Bonus percent (5% = 5)
+    // Bonus percent (5% = 500)
     uint256 private _bonusPercent;
 
     // Minimum amount of wei to invest
@@ -211,13 +260,15 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     // Limit of emission of crowdsale
     uint256 private _hardcap; // (Tokens)
 
-    // ending time (UNIX)
+    // ending time
     uint256 private _endTime; // (UNIX)
 
     // states
-    enum State {OFF, ON}
-    State private reserve = State.OFF;
-    State private whiteList = State.OFF;
+    enum Reserving {OFF, ON}
+    Reserving private _reserve = Reserving.OFF;
+
+    enum State {Usual, Whitelist, PrivateSale, Closed}
+    State public state = State.Usual;
 
     // events
     event TokensPurchased(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
@@ -227,7 +278,11 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
 
     // time controller
     modifier active() {
-        require(block.timestamp <= _endTime);
+        require(
+            block.timestamp <= _endTime
+            && _tokensPurchased < _hardcap
+            && state != State.Closed
+            );
         _;
     }
 
@@ -238,9 +293,23 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
-     * @dev constructor function
+     * @dev iniialize start variables.
+     * Can be called once.
      */
-    constructor(uint256 rate, uint256 initialETHPrice, uint256 decimals, address payable wallet, address teamAddr, address payable exchange, BTLToken token, uint256 endTime, uint256 hardcap) public {
+    function init(
+        uint256 rate,
+        uint256 initialETHPrice,
+        uint256 decimals,
+        address payable wallet,
+        address teamAddr,
+        address payable exchange,
+        BTLToken token,
+        uint256 endTime,
+        uint256 hardcap
+        ) public {
+
+        require(address(_token) == address(0));
+
         require(rate != 0, "Rate is 0");
         require(initialETHPrice != 0, "Initial ETH price is 0");
         require(wallet != address(0), "Wallet is the zero address");
@@ -258,6 +327,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
         _token = token;
         _endTime = endTime;
         _hardcap = hardcap;
+
     }
 
     /**
@@ -275,35 +345,38 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function buyTokens(address beneficiary) public payable nonReentrant active {
         require(beneficiary != address(0), "New parameter value is the zero address");
-        require(msg.value >= _minimum, "Wei amount is less than 0.5 ether");
+        require(msg.value >= _minimum, "Wei amount is less than minimum");
 
-        if (whiteList == State.ON) {
-            require(isWhitelisted(msg.sender), "Sender is not whitelisted");
+        if (state == State.Whitelist) {
+            require(isWhitelisted(beneficiary), "Beneficiary is not whitelisted");
+        }
+
+        if (state == State.PrivateSale) {
+            require(isEnlisted(beneficiary), "Beneficiary is not enlisted");
         }
 
         uint256 weiAmount = msg.value;
 
-        uint256 tokens = weiToTokens(weiAmount).mul(100 + _bonusPercent).div(100);
+        uint256 tokens = weiToTokens(weiAmount).mul(10000 + _bonusPercent).div(10000);
 
         if (_tokensPurchased.add(tokens) > _hardcap) {
-            weiAmount = tokensToWei((_hardcap.sub(_tokensPurchased)).mul(100).div(100 + _bonusPercent));
             tokens = _hardcap.sub(_tokensPurchased);
-            msg.sender.transfer(msg.value.sub(weiAmount));
+            weiAmount = tokensToWei((tokens).mul(10000).div(10000 + _bonusPercent));
+            _sendETH(msg.sender, msg.value.sub(weiAmount));
         }
 
         if (
             _tokensPurchased < _reserveTrigger
             && _tokensPurchased.add(tokens) > _reserveTrigger
-            && _reserved < _reserveLimit
+            && reserved() < _reserveLimit
             ) {
-            reserve = State.ON;
-            _wallet.transfer(tokensToWei((_reserveTrigger) - _tokensPurchased));
-            emit Payout(_wallet, tokensToWei((_reserveTrigger) - _tokensPurchased), tokensToUSD((_reserveTrigger) - _tokensPurchased));
-            refund(weiAmount.sub(tokensToWei((_reserveTrigger) - _tokensPurchased)));
+            _reserve = Reserving.ON;
+            uint256 unreservedWei = tokensToWei(_reserveTrigger - _tokensPurchased);
+            _sendETH(_wallet, unreservedWei);
+            refund(weiAmount.sub(unreservedWei));
         } else {
             refund(weiAmount);
         }
-
 
         _token.mint(beneficiary, tokens);
 
@@ -315,17 +388,25 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
+     * @dev internal Send tokens function.
+     * @param recipient address to send tokens to.
+     * @param amount amount of tokens.
+     */
+    function _sendTokens(address recipient, uint256 amount) internal {
+        require(recipient != address(0), "Recipient is the zero address");
+        _token.mint(recipient, amount);
+        emit TokensSent(msg.sender, recipient, amount);
+    }
+
+    /**
      * @dev Send tokens to recipient.
      * Available only to the admin and owner.
      * @param recipient address to send tokens to.
      * @param amount amount of tokens.
      */
-    function sendTokens(address recipient, uint256 amount) public onlyAdmin {
-        require(recipient != address(0));
-        _token.mint(recipient, amount);
-
+    function sendTokens(address recipient, uint256 amount) internal {
+        _sendTokens(recipient, amount);
         _tokensPurchased += amount;
-        emit TokensSent(msg.sender, recipient, amount);
     }
 
     /**
@@ -336,9 +417,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function sendTokensToList(address[] memory recipients, uint256 amount) public onlyAdmin {
         for (uint256 i = 0; i < recipients.length; i++) {
-            require(recipients[i] != address(0), "Recipient is the zero address");
-            _token.mint(recipients[i], amount);
-            emit TokensSent(msg.sender, recipients[i], amount);
+            _sendTokens(recipients[i], amount);
         }
         _tokensPurchased += amount * recipients.length;
     }
@@ -350,39 +429,61 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      * @param weiAmount amount of wei.
      */
      function sendTokensPerWei(address recipient, uint256 weiAmount) public onlyAdmin {
-         require(recipient != address(0));
-         uint256 tokens = weiToTokens(weiAmount);
-         _token.mint(recipient, tokens);
+         _sendTokens(recipient, weiToTokens(weiAmount));
+         _tokensPurchased += weiToTokens(weiAmount);
+     }
 
-         _tokensPurchased += tokens;
-         emit TokensSent(msg.sender, recipient, tokens);
+     /**
+      * @dev Send fixed amount of tokens per wei to list of recipients.
+      * Available only to the admin and owner.
+      * @param recipients addresses to send tokens to.
+      * @param weiAmount amount of wei.
+      */
+     function sendTokensPerWeiToList(address[] memory recipients, uint256 weiAmount) public onlyAdmin {
+         for (uint256 i = 0; i < recipients.length; i++) {
+             _sendTokens(recipients[i], weiToTokens(weiAmount));
+         }
+         _tokensPurchased += weiToTokens(weiAmount) * recipients.length;
      }
 
     /**
      * @dev internal function to allocate funds.
      */
      function refund(uint256 weiAmount) internal {
-         address payable recipient;
-         if (reserve == State.OFF) {
-             _wallet.transfer(weiAmount);
-             emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
+         if (_reserve == Reserving.OFF) {
+             _sendETH(_wallet, weiAmount);
          } else {
-             uint256 usdAmount = weiToUSD(weiAmount);
+             if (USDToWei(_reserveLimit) >= _reserved) {
+                 if (weiToUSD(_reserved.add(weiAmount)) >= _reserveLimit) {
 
-             if (_reserved.add(usdAmount) >= _reserveLimit) {
-                 _wallet.transfer(weiAmount - USDToWei(_reserveLimit - _reserved));
-                 emit Payout(_wallet, weiAmount - USDToWei(_reserveLimit - _reserved), weiToUSD(weiAmount) - (_reserveLimit - _reserved));
-                 weiAmount = USDToWei(_reserveLimit - _reserved);
-                 _exchange.transfer(weiAmount);
-                 emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
-                 _reserved = _reserveLimit;
-                 reserve = State.OFF;
+                     uint256 reservedWei = USDToWei(_reserveLimit).sub(_reserved);
+                     _sendETH(_exchange, reservedWei);
+                     uint256 unreservedWei = weiAmount - reservedWei;
+                     _sendETH(_wallet, unreservedWei);
+
+                     _reserved = USDToWei(_reserveLimit);
+                     _reserve = Reserving.OFF;
+                } else {
+                     _reserved = _reserved.add(weiAmount);
+                     _sendETH(_exchange, weiAmount);
+                }
              } else {
-                 _reserved = _reserved.add(usdAmount);
-                 _exchange.transfer(weiAmount);
-                 emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
+                 _sendETH(_wallet, weiAmount);
+                 _reserve = Reserving.OFF;
              }
          }
+     }
+
+     function _sendETH(address payable recipient, uint256 weiAmount) internal {
+         require(recipient != address(0));
+
+         if (recipient == _exchange) {
+             Exchange(_exchange).acceptETH.value(weiAmount)();
+         } else {
+             recipient.transfer(weiAmount);
+         }
+
+         emit Payout(recipient, weiAmount, weiToUSD(weiAmount));
      }
 
     /**
@@ -397,6 +498,8 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
         Exchange(_exchange).finish();
+
+        state = State.Usual;
     }
 
     /**
@@ -475,6 +578,17 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
         require(newWallet != address(0), "New parameter value is the zero address");
 
         _wallet = newWallet;
+    }
+
+    /**
+     * @dev Function to change the address of team.
+     * Available only to the admin and owner.
+     * @param newTeamAddr new address.
+     */
+    function setTeamAddr(address payable newTeamAddr) external onlyAdmin {
+        require(newTeamAddr != address(0), "New parameter value is the zero address");
+
+        _teamAddr = newTeamAddr;
     }
 
     /**
@@ -580,15 +694,35 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
-     * @dev Function to change activate/deactivate whitelist.
+     * @dev Function to change activate whitelist state.
      * Available only to the admin and owner.
      */
     function switchWhitelist() external onlyAdmin {
-        if (whiteList == State.OFF) {
-            whiteList = State.ON;
-        } else {
-            whiteList = State.OFF;
-        }
+        state = State.Whitelist;
+    }
+
+    /**
+     * @dev Function to change activate private sale state.
+     * Available only to the admin and owner.
+     */
+    function switchPrivateSale() external onlyAdmin {
+        state = State.PrivateSale;
+    }
+
+    /**
+     * @dev Function to change activate closed state.
+     * Available only to the admin and owner.
+     */
+    function switchClosed() external onlyAdmin {
+        state = State.Closed;
+    }
+
+    /**
+     * @dev Function to change activate usual state.
+     * Available only to the admin and owner.
+     */
+    function switchUsual() external onlyAdmin {
+        state = State.Usual;
     }
 
     /**
@@ -603,8 +737,6 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
 
     }
 
-
-
     /**
      * @return the token being sold.
      */
@@ -617,6 +749,13 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      */
     function wallet() public view returns (address payable) {
         return _wallet;
+    }
+
+    /**
+     * @return the address where funds are collected.
+     */
+    function teamAddr() public view returns (address) {
+        return _teamAddr;
     }
 
     /**
@@ -672,7 +811,7 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
      * @return the reserved amount of ETH in USD.
      */
     function reserved() public view returns (uint256) {
-        return _reserved;
+        return weiToUSD(_reserved);
     }
 
     /**
@@ -704,17 +843,23 @@ contract Crowdsale is ReentrancyGuard, PriceReceiver, WhitelistedRole {
     }
 
     /**
-     * @return true if whiteList is activated.
-     */
-    function whitelist() public view returns (bool) {
-        return whiteList == State.ON;
-    }
-
-    /**
      * @return the amount of purchased tokens.
      */
     function tokensPurchased() public view returns (uint256) {
         return _tokensPurchased;
     }
 
+    /**
+     * @return true if caller is owner.
+     */
+    function isOwner(address account) public view returns (bool) {
+        return _token.isOwner(account);
+    }
+
+    /**
+     * @return true if caller is admin.
+     */
+    function isAdmin(address account) public view returns (bool) {
+        return _token.isAdmin(account);
+    }
 }

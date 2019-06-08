@@ -192,6 +192,16 @@ interface Crowdsale {
 }
 
 /**
+ * @title Exchange interface
+ */
+ interface Exchange {
+     function enlisted(address account) external view returns(bool);
+     function acceptETH() external payable;
+     function finish() external;
+     function reserveAddress() external view returns(address payable);
+ }
+
+/**
  * @title ApproveAndCall Interface.
  * @dev ApproveAndCall system allows to communicate with smart-contracts.
  */
@@ -301,7 +311,8 @@ contract LockableToken is ERC20Mintable, AdminRole {
     bool private _released;
 
     // crowdsale address
-    Crowdsale private _crowdsale;
+    Crowdsale internal _crowdsale;
+    Exchange internal _exchange;
 
     // variables to store info about locked addresses
     mapping (address => bool) private _unlocked;
@@ -314,10 +325,15 @@ contract LockableToken is ERC20Mintable, AdminRole {
     /**
      * @dev prevent any transfer of locked tokens.
      */
-    modifier canTransfer(address from, uint256 value) {
-        require(_released || isAdmin(from) || _unlocked[from]);
+    modifier canTransfer(address from, address to, uint256 value) {
+        if (!_released && !isAdmin(from) && !_unlocked[from]) {
+            if (address(_exchange) != address(0)) {
+                require(_exchange.enlisted(from));
+                require(to == address(_exchange) || to == _exchange.reserveAddress());
+            }
+        }
         if (_locked[from].amount > 0 && block.timestamp < _locked[from].time) {
-            require(value <= _locked[from].amount);
+            require(value <= balanceOf(from).sub(_locked[from].amount));
         }
         _;
     }
@@ -325,7 +341,6 @@ contract LockableToken is ERC20Mintable, AdminRole {
     /**
      * @dev set crowdsale address.
      * Available only to the owner and admin.
-     * Available only when tokens are not released.
      * @param addr crowdsale address.
      */
     function setCrowdsaleAddr(address addr) external onlyAdmin {
@@ -351,8 +366,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
      */
     function lock(address account, uint256 amount, uint256 time) external onlyAdmin {
         require(account != address(0) && amount != 0);
-        _locked[account] = Lock(amount, time);
-        _unlocked[account] = false;
+        _locked[account] = Lock(amount, block.timestamp.add(time));
     }
 
     /**
@@ -402,7 +416,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
      * @param to The address to transfer to.
      * @param value The amount to be transferred.
      */
-    function _transfer(address from, address to, uint256 value) internal canTransfer(from, value) {
+    function _transfer(address from, address to, uint256 value) internal canTransfer(from, to, value) {
         super._transfer(from, to, value);
     }
 
@@ -478,10 +492,23 @@ contract BTLToken is LockableToken {
     }
 
     /**
+     * @dev set crowdsale address.
+     * Available only to the owner and admin.
+     * @param addr crowdsale address.
+     */
+    function setExchangeAddr(address addr) external onlyAdmin {
+        require(isContract(addr));
+
+        registerContract(addr);
+
+        _exchange = Exchange(addr);
+    }
+
+    /**
      * @dev Allows to register other smart contracts (to prevent loss of tokens via transfer function).
      * @param addr Address of smart contracts to work with.
      */
-    function registerContract(address addr) external onlyAdmin {
+    function registerContract(address addr) public onlyAdmin {
         require(isContract(addr));
         _contracts[addr] = true;
     }
@@ -519,7 +546,7 @@ contract BTLToken is LockableToken {
      */
     function transferFrom(address from, address to, uint256 value) public returns (bool) {
 
-        if (_contracts[to]) {
+        if (_contracts[to] && !_contracts[msg.sender]) {
             ApproveAndCallFallBack(to).receiveApproval(msg.sender, value, address(this), new bytes(0));
         } else {
             super.transferFrom(from, to, value);

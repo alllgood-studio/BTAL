@@ -53,6 +53,8 @@ interface Crowdsale {
     function wallet() external view returns (address payable);
     function reserved() external view returns (uint256);
     function reserveLimit() external view returns (uint256);
+    function reserveTrigger() external view returns (uint256);
+    function isEnlisted(address account) external view returns (bool);
 }
 
 /**
@@ -64,7 +66,7 @@ contract Exchange {
     BTLToken public BTL;
     Crowdsale public crowdsale;
 
-    mapping (address => bool) private _enlisted;
+    address payable private _reserveAddress;
 
     uint256 private _balance;
 
@@ -83,14 +85,15 @@ contract Exchange {
 
     event Exchanged(address user, uint256 tokenAmount, uint256 weiAmount);
 
-    constructor(address BTLAddr, address crowdsaleAddr) public {
-        require(BTLAddr != address(0));
+    constructor(address BTLAddr, address crowdsaleAddr, address payable reserveAddress) public {
+        require(BTLAddr != address(0) && crowdsaleAddr != address(0) && reserveAddress != address(0));
 
         BTL = BTLToken(BTLAddr);
         crowdsale = Crowdsale(crowdsaleAddr);
+        _reserveAddress = reserveAddress;
     }
 
-    function() external payable {
+    function acceptETH() external payable {
         _balance += msg.value;
     }
 
@@ -100,8 +103,9 @@ contract Exchange {
     }
 
     function exchange(address payable account, uint256 amount) public inActiveState {
-        require(_enlisted[account]);
+        require(crowdsale.isEnlisted(account));
         BTL.transferFrom(account, address(this), amount);
+        BTL.transfer(_reserveAddress, amount);
 
         uint256 weiAmount = getETHAmount(amount);
 
@@ -112,7 +116,7 @@ contract Exchange {
 
     function finish() public onlyAdmin {
         require(BTL.released());
-        crowdsale.wallet().transfer(address(this).balance);
+        _reserveAddress.transfer(address(this).balance);
     }
 
     function setCrowdsale(address addr) public onlyAdmin {
@@ -127,32 +131,19 @@ contract Exchange {
 
     }
 
-    function addToList(address account) public onlyAdmin {
-        enlisted[account] = true;
-    }
-
-    function addListToList(address[] memory accounts) public onlyAdmin {
-        for (uint256 i = 0; i < accounts.length; i++) {
-            enlisted[accounts[i]] = true;
-        }
-    }
-
-    function removeFromList(address account) public onlyAdmin {
-        enlisted[account] = false;
-    }
-
-    function removeListFromList(address[] memory accounts) public onlyAdmin {
-        for (uint256 i = 0; i < accounts.length; i++) {
-            enlisted[accounts[i]] = false;
-        }
-    }
-
     function enlisted(address addr) public view returns(bool) {
-        return _enlisted[addr];
+        if (addr == address(this)) {
+            return true;
+        }
+        return crowdsale.isEnlisted(addr);
     }
 
     function getETHAmount(uint256 tokenAmount) public view returns(uint256) {
-        return _balance.mul(tokenAmount).div(100000000 * (10**18));
+        return tokenAmount.mul(_balance).div(crowdsale.reserveTrigger());
+    }
+
+    function reserveAddress() public view returns(address payable) {
+        return _reserveAddress;
     }
 
 }
