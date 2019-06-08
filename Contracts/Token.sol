@@ -77,7 +77,7 @@ contract Ownable {
     }
 
     modifier onlyOwner() {
-        require(isOwner(msg.sender), "Caller is not the owner");
+        require(isOwner(msg.sender), "Caller has no permission");
         _;
     }
 
@@ -106,13 +106,18 @@ contract AdminRole is Ownable {
 
     Roles.Role private _admins;
 
+    constructor() internal {
+        _admins.add(msg.sender);
+        emit AdminAdded(msg.sender);
+    }
+
     modifier onlyAdmin() {
-        require(isAdmin(msg.sender) || isOwner(msg.sender), "Sender has no permission");
+        require(isAdmin(msg.sender), "Caller has no permission");
         _;
     }
 
     function isAdmin(address account) public view returns (bool) {
-        return(_admins.has(account) || isOwner(account));
+        return(_admins.has(account));
     }
 
     function addAdmin(address account) public onlyOwner {
@@ -134,8 +139,13 @@ contract MinterRole is Ownable {
 
     Roles.Role private _minters;
 
+    constructor() internal {
+        _minters.add(msg.sender);
+        emit MinterAdded(msg.sender);
+    }
+
     modifier onlyMinter() {
-        require(isMinter(msg.sender) || isOwner(msg.sender), "Sender has no permission");
+        require(isMinter(msg.sender), "Caller has no permission");
         _;
     }
 
@@ -305,15 +315,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
      * @dev prevent any transfer of locked tokens.
      */
     modifier canTransfer(address from, uint256 value) {
-        if (address(_crowdsale) != address(0)) {
-            if (
-                _crowdsale.whitelisted(from)
-                && _crowdsale.reserved()
-                == _crowdsale.reserveLimit()
-                )
-            { return; }
-        }
-        require(_released || isOwner(msg.sender) || _unlocked[msg.sender]);
+        require(_released || isAdmin(from) || _unlocked[from]);
         if (_locked[from].amount > 0 && block.timestamp < _locked[from].time) {
             require(value <= _locked[from].amount);
         }
@@ -327,7 +329,8 @@ contract LockableToken is ERC20Mintable, AdminRole {
      * @param addr crowdsale address.
      */
     function setCrowdsaleAddr(address addr) external onlyAdmin {
-        require(!_released);
+        require(isContract(addr));
+
         if (address(_crowdsale) != address(0)) {
             removeMinter(address(_crowdsale));
             removeAdmin(address(_crowdsale));
@@ -355,6 +358,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
     /**
      * @dev unlock tokens of specific address.
      * Available only to the owner and admin.
+     * @param account address.
      */
     function unlock(address account) external onlyAdmin {
         require(account != address(0));
@@ -362,6 +366,21 @@ contract LockableToken is ERC20Mintable, AdminRole {
             delete _locked[account];
         }
         _unlocked[account] = true;
+    }
+
+    /**
+     * @dev unlock tokens of array of addresses.
+     * Available only to the owner and admin.
+     * @param accounts array of addresses.
+     */
+    function unlockList(address[] calldata accounts) external onlyAdmin {
+        for (uint256 i = 0; i < accounts.length; i++) {
+            require(accounts[i] != address(0));
+            if (_locked[accounts[i]].amount > 0) {
+                delete _locked[accounts[i]];
+            }
+            _unlocked[accounts[i]] = true;
+        }
     }
 
     /**
@@ -400,6 +419,16 @@ contract LockableToken is ERC20Mintable, AdminRole {
     function crowdsale() external view returns(address) {
         return address(_crowdsale);
     }
+
+    /**
+     * @return true if the address is a сontract
+     */
+    function isContract(address addr) public view returns (bool) {
+        uint size;
+        assembly { size := extcodesize(addr) }
+        return size > 0;
+    }
+
 }
 
 /**
@@ -453,10 +482,7 @@ contract BTLToken is LockableToken {
      * @param addr Address of smart contracts to work with.
      */
     function registerContract(address addr) external onlyAdmin {
-        require(addr != address(0));
-        uint size;
-        assembly { size := extcodesize(addr) }
-        require(size > 0);
+        require(isContract(addr));
         _contracts[addr] = true;
     }
 
