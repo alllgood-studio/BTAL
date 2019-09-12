@@ -4,22 +4,40 @@ pragma solidity 0.5.7;
  * @title SafeMath
  * @dev Unsigned math operations with safety checks that revert on error.
  */
-library SafeMath {
+ library SafeMath {
 
-    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b <= a);
-        uint256 c = a - b;
+     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+         if (a == 0) {
+             return 0;
+         }
 
-        return c;
-    }
+         uint256 c = a * b;
+         require(c / a == b, "SafeMath: multiplication overflow");
 
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a + b;
-        require(c >= a);
+         return c;
+     }
 
-        return c;
-    }
-}
+     function div(uint256 a, uint256 b) internal pure returns (uint256) {
+         require(b > 0, "SafeMath: division by zero");
+         uint256 c = a / b;
+
+         return c;
+     }
+
+     function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+         require(b <= a, "SafeMath: subtraction overflow");
+         uint256 c = a - b;
+
+         return c;
+     }
+
+     function add(uint256 a, uint256 b) internal pure returns (uint256) {
+         uint256 c = a + b;
+         require(c >= a, "SafeMath: addition overflow");
+
+         return c;
+     }
+ }
 
 /**
  * @title Roles
@@ -107,8 +125,8 @@ contract AdminRole is Ownable {
     Roles.Role private _admins;
 
     constructor() internal {
-        _admins.add(msg.sender);
-        emit AdminAdded(msg.sender);
+        _admins.add(_owner);
+        emit AdminAdded(_owner);
     }
 
     modifier onlyAdmin() {
@@ -140,8 +158,8 @@ contract MinterRole is Ownable {
     Roles.Role private _minters;
 
     constructor() internal {
-        _minters.add(msg.sender);
-        emit MinterAdded(msg.sender);
+        _minters.add(_owner);
+        emit MinterAdded(_owner);
     }
 
     modifier onlyMinter() {
@@ -183,12 +201,8 @@ interface IERC20 {
  * @title Crowdsale interface
  */
 interface Crowdsale {
-    function endTime() external view returns(uint256);
-    function whitelisted(address account) external view returns(bool);
-    function reserved() external view returns(uint256);
-    function reserveLimit() external view returns(uint256);
-    function tokensPurchased() external view returns (uint256);
     function hardcap() external view returns (uint256);
+    function isEnded() external view returns(bool);
 }
 
 /**
@@ -196,8 +210,6 @@ interface Crowdsale {
  */
  interface Exchange {
      function enlisted(address account) external view returns(bool);
-     function acceptETH() external payable;
-     function finish() external;
      function reserveAddress() external view returns(address payable);
  }
 
@@ -263,6 +275,7 @@ contract ERC20 is IERC20 {
     }
 
     function _transfer(address from, address to, uint256 value) internal {
+        require(from != address(0));
         require(to != address(0));
 
         _balances[from] = _balances[from].sub(value);
@@ -340,10 +353,10 @@ contract LockableToken is ERC20Mintable, AdminRole {
 
     /**
      * @dev set crowdsale address.
-     * Available only to the owner and admin.
+     * Available only to the owner.
      * @param addr crowdsale address.
      */
-    function setCrowdsaleAddr(address addr) external onlyAdmin {
+    function setCrowdsaleAddr(address addr) external {
         require(isContract(addr));
 
         if (address(_crowdsale) != address(0)) {
@@ -403,8 +416,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
      */
     function release() external onlyAdmin {
         if (address(_crowdsale) != address(0)) {
-            require(block.timestamp >= _crowdsale.endTime()
-                || _crowdsale.tokensPurchased() >= _crowdsale.hardcap());
+            require(_crowdsale.isEnded());
             _crowdsale = Crowdsale(address(0));
         }
         _released = true;
@@ -458,13 +470,16 @@ contract BTLToken is LockableToken {
     uint8 private _decimals = 18;
 
     // initial supply
-    uint256 public constant INITIAL_SUPPLY = 250000000 * (10 ** 18);
+    uint256 internal constant INITIAL_SUPPLY = 250000000 * (10 ** 18);
 
     // registered contracts (to prevent loss of token via transfer function)
     mapping (address => bool) private _contracts;
 
     // emission limit
     uint256 private _hardcap = 1000000000 * (10 ** 18);
+
+    event ContractAdded(address indexed admin, address contractAddr);
+    event ContractRemoved(address indexed admin, address contractAddr);
 
     /**
      * @dev constructor function that is called once at deployment of the contract.
@@ -473,7 +488,7 @@ contract BTLToken is LockableToken {
      */
     constructor(address recipient, address initialOwner) public Ownable(initialOwner) {
 
-        _mint(recipient, INITIAL_SUPPLY);
+        mint(recipient, INITIAL_SUPPLY);
 
     }
 
@@ -492,13 +507,36 @@ contract BTLToken is LockableToken {
     }
 
     /**
-     * @dev set crowdsale address.
+     * @dev upgraded transferOwnership function:
+     * Transfers ownership of the contract to a new account (`newOwner`) and give to it admin and minter roles.
+     * Available only to the owner.
+     * @param newOwner Address of new owner.
+     */
+    function transferOwnership(address newOwner) public {
+        removeAdmin(msg.sender);
+        removeMinter(msg.sender)
+        super.transferOwnership(newOwner);
+        addAdmin(newOwner);
+        addMinter(newOwner);
+    }
+
+    /**
+     * @dev upgraded addMinter function:
+     * Give to address admin and minter roles.
+     * Available only to the owner.
+     * @param newOwner Address of new owner.
+     */
+    function addMinter(address account) public {
+        super.addMinter(account);
+        addAdmin(account);
+    }
+
+    /**
+     * @dev set exchange address.
      * Available only to the owner and admin.
-     * @param addr crowdsale address.
+     * @param addr Exchange address.
      */
     function setExchangeAddr(address addr) external onlyAdmin {
-        require(isContract(addr));
-
         registerContract(addr);
 
         _exchange = Exchange(addr);
@@ -511,6 +549,7 @@ contract BTLToken is LockableToken {
     function registerContract(address addr) public onlyAdmin {
         require(isContract(addr));
         _contracts[addr] = true;
+        emit ContractAdded(msg.sender, addr);
     }
 
     /**
@@ -519,6 +558,7 @@ contract BTLToken is LockableToken {
      */
     function unregisterContract(address addr) external onlyAdmin {
         _contracts[addr] = false;
+        emit ContractRemoved(msg.sender, addr);
     }
 
     /**
@@ -556,6 +596,18 @@ contract BTLToken is LockableToken {
     }
 
     /**
+     * @dev upgraded 'mint' function to prevent exceeding of hardcap.
+     * @param account The address which you want to mint tokens to.
+     * @param amount the amount of tokens to be minted.
+     */
+    function mint(address account, uint256 amount) public returns (bool) {
+        require(_totalSupply.add(amount) <= _hardcap);
+
+        return super._mint(account, amount);
+
+    }
+
+    /**
      * @dev Allows to any owner of the contract withdraw needed ERC20 token from this contract (promo or bounties for example).
      * @param ERC20Token Address of ERC20 token.
      * @param recipient Account to receive tokens.
@@ -563,6 +615,7 @@ contract BTLToken is LockableToken {
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
         uint256 amount = IERC20(ERC20Token).balanceOf(address(this));
+        require(amount > 0);
         IERC20(ERC20Token).transfer(recipient, amount);
 
     }

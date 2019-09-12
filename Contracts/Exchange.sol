@@ -1,4 +1,4 @@
-pragma solidity ^0.5.7;
+pragma solidity 0.5.7;
 
 library SafeMath {
 
@@ -8,20 +8,20 @@ library SafeMath {
         }
 
         uint256 c = a * b;
-        require(c / a == b);
+        require(c / a == b, "SafeMath: multiplication overflow");
 
         return c;
     }
 
     function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b > 0);
+        require(b > 0, "SafeMath: division by zero");
         uint256 c = a / b;
 
         return c;
     }
 
     function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-        require(b <= a);
+        require(b <= a, "SafeMath: subtraction overflow");
         uint256 c = a - b;
 
         return c;
@@ -29,7 +29,7 @@ library SafeMath {
 
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
         uint256 c = a + b;
-        require(c >= a);
+        require(c >= a, "SafeMath: addition overflow");
 
         return c;
     }
@@ -50,7 +50,6 @@ interface BTLToken {
  * @title Crowdsale interface
  */
 interface Crowdsale {
-    function wallet() external view returns (address payable);
     function reserved() external view returns (uint256);
     function reserveLimit() external view returns (uint256);
     function reserveTrigger() external view returns (uint256);
@@ -79,11 +78,12 @@ contract Exchange {
     }
 
     modifier onlyAdmin() {
-        require(BTL.isAdmin(msg.sender));
+        require(BTL.isAdmin(msg.sender), "Caller has no permission");
         _;
     }
 
     event Exchanged(address user, uint256 tokenAmount, uint256 weiAmount);
+    event BalanceIncreased(address user, uint256 amount);
 
     constructor(address BTLAddr, address crowdsaleAddr, address payable reserveAddress) public {
         require(BTLAddr != address(0) && crowdsaleAddr != address(0) && reserveAddress != address(0));
@@ -91,10 +91,16 @@ contract Exchange {
         BTL = BTLToken(BTLAddr);
         crowdsale = Crowdsale(crowdsaleAddr);
         _reserveAddress = reserveAddress;
+        _balance = address(this).balance;
     }
 
-    function acceptETH() external payable {
+    function() external payable {
+        acceptETH();
+    }
+
+    function acceptETH() public payable {
         _balance += msg.value;
+        BalanceIncreased(msg.sender, msg.value);
     }
 
     function receiveApproval(address payable from, uint256 amount, address token, bytes calldata extraData) external {
@@ -119,14 +125,16 @@ contract Exchange {
         _reserveAddress.transfer(address(this).balance);
     }
 
-    function setCrowdsale(address addr) public onlyAdmin {
+    function setCrowdsaleAddr(address addr) public onlyAdmin {
         require(addr != address(0));
+        require(isContract(addr));
         crowdsale = Crowdsale(addr);
     }
 
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
         uint256 amount = BTLToken(ERC20Token).balanceOf(address(this));
+        require(amount > 0);
         BTLToken(ERC20Token).transfer(recipient, amount);
 
     }
@@ -144,6 +152,12 @@ contract Exchange {
 
     function reserveAddress() public view returns(address payable) {
         return _reserveAddress;
+    }
+
+    function isContract(address addr) internal view returns (bool) {
+        uint size;
+        assembly { size := extcodesize(addr) }
+        return size > 0;
     }
 
 }

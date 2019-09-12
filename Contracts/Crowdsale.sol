@@ -1,4 +1,4 @@
-pragma solidity ^0.5.7;
+pragma solidity 0.5.7;
 
 /**
  * @title SafeMath
@@ -59,7 +59,6 @@ interface BTLToken {
  */
  interface Exchange {
      function enlisted(address account) external view returns(bool);
-     function acceptETH() external payable;
      function finish() external;
  }
 
@@ -142,7 +141,7 @@ contract WhitelistedRole {
     BTLToken private _token;
 
     modifier onlyAdmin() {
-        require(_token.isAdmin(msg.sender));
+        require(_token.isAdmin(msg.sender), "Caller has no permission");
         _;
     }
 
@@ -160,7 +159,7 @@ contract WhitelistedRole {
         emit WhitelistedAdded(account);
     }
 
-    function addListToWhitelist(address[] memory accounts) public onlyAdmin {
+    function addListToWhitelisted(address[] memory accounts) public onlyAdmin {
         for (uint256 i = 0; i < accounts.length; i++) {
             _whitelisteds.add(accounts[i]);
             emit WhitelistedAdded(accounts[i]);
@@ -174,15 +173,15 @@ contract WhitelistedRole {
 }
 
 /**
- * @title PrivateListRole
+ * @title EnlistedRole
  * @dev enlisted accounts have been approved to perform certain actions (e.g. participate in a
  * crowdsale).
  */
-contract PrivateListRole {
+contract EnlistedRole {
     using Roles for Roles.Role;
 
-    event PrivateListAdded(address indexed account);
-    event PrivateListRemoved(address indexed account);
+    event EnlistedAdded(address indexed account);
+    event EnlistedRemoved(address indexed account);
 
     Roles.Role private _enlisted;
 
@@ -204,26 +203,26 @@ contract PrivateListRole {
 
     function addEnlisted(address account) public onlyAdmin {
         _enlisted.add(account);
-        emit PrivateListAdded(account);
+        emit EnlistedAdded(account);
     }
 
     function addListToEnlisted(address[] memory accounts) public onlyAdmin {
         for (uint256 i = 0; i < accounts.length; i++) {
             _enlisted.add(accounts[i]);
-            emit PrivateListAdded(accounts[i]);
+            emit EnlistedAdded(accounts[i]);
         }
     }
 
     function removeEnlisted(address account) public onlyAdmin {
         _enlisted.remove(account);
-        emit PrivateListRemoved(account);
+        emit EnlistedRemoved(account);
     }
 }
 
 /**
  * @title Crowdsale contract
  */
-contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
+contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     using SafeMath for uint256;
 
     // The token being sold
@@ -232,6 +231,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     // Address where funds are collected
     address payable private _wallet;
     address payable private _exchange;
+    address private _bonusAddr;
     address private _teamAddr;
     address private _priceProvider;
 
@@ -252,7 +252,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     uint256 private _rate;
 
     // Bonus percent (5% = 500)
-    uint256 private _bonusPercent;
+    uint256 private _bonusPercent = 500;
 
     // Minimum amount of wei to invest
     uint256 private _minimum = 0.1 ether; // (ETH)
@@ -275,6 +275,9 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     event TokensSent(address indexed sender, address indexed beneficiary, uint256 amount);
     event NewETHPrice(uint256 oldValue, uint256 newValue, uint256 decimals);
     event Payout(address indexed recipient, uint256 weiAmount, uint256 usdAmount);
+    event BonusPayed(address indexed beneficiary, uint256 amount);
+    event ReserveState(bool isActive);
+    event StateChanged(uint256 previousState, uint256 actualState);
 
     // time controller
     modifier active() {
@@ -306,7 +309,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
         BTLToken token,
         uint256 endTime,
         uint256 hardcap
-        ) public {
+        ) public onlyAdmin {
 
         require(address(_token) == address(0));
 
@@ -314,9 +317,11 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
         require(initialETHPrice != 0, "Initial ETH price is 0");
         require(wallet != address(0), "Wallet is the zero address");
         require(teamAddr != address(0), "teamAddr is the zero address");
-        require(address(token) != address(0), "Token is the zero address");
+        require(isContract(address(token)), "Token is not a contract");
+        require(isContract(exchange), "Exchange is not a contract");
         require(endTime != 0, "EndTime is 0");
         require(hardcap != 0, "HardCap is 0");
+
 
         _rate = rate;
         _currentETHPrice = initialETHPrice;
@@ -357,20 +362,29 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
         uint256 weiAmount = msg.value;
 
-        uint256 tokens = weiToTokens(weiAmount).mul(10000 + _bonusPercent).div(10000);
+        uint256 tokens = weiToTokens(weiAmount);
 
-        if (_tokensPurchased.add(tokens) > _hardcap) {
-            tokens = _hardcap.sub(_tokensPurchased);
-            weiAmount = tokensToWei((tokens).mul(10000).div(10000 + _bonusPercent));
+        uint256 bonusAmount = tokens.mul(_bonusPercent).div(10000);
+
+        if (_tokensPurchased.add(tokens).add(bonusAmount) > _hardcap) {
+            tokens = (_hardcap.sub(_tokensPurchased)).mul(10000).div(10000 + _bonusPercent);
+            bonusAmount = (_hardcap.sub(_tokensPurchased).sub(tokens);
+            weiAmount = tokensToWei(tokens);
             _sendETH(msg.sender, msg.value.sub(weiAmount));
         }
 
+        if (bonusAmount > 0) {
+            _token.mint(_bonusAddr, bonusAmount)
+            emit BonusPayed(beneficiary, bonusAmount);
+        }
+
         if (
-            _tokensPurchased < _reserveTrigger
+            _tokensPurchased <= _reserveTrigger
             && _tokensPurchased.add(tokens) > _reserveTrigger
             && reserved() < _reserveLimit
             ) {
             _reserve = Reserving.ON;
+            emit ReserveState(true);
             uint256 unreservedWei = tokensToWei(_reserveTrigger - _tokensPurchased);
             _sendETH(_wallet, unreservedWei);
             refund(weiAmount.sub(unreservedWei));
@@ -400,18 +414,18 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Send tokens to recipient.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param recipient address to send tokens to.
      * @param amount amount of tokens.
      */
-    function sendTokens(address recipient, uint256 amount) internal {
+    function sendTokens(address recipient, uint256 amount) public onlyAdmin {
         _sendTokens(recipient, amount);
-        _tokensPurchased += amount;
+        _tokensPurchased = _tokensPurchased.add(amount);
     }
 
     /**
      * @dev Send fixed amount of tokens to list of recipients.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param recipients addresses to send tokens to.
      * @param amount amount of tokens.
      */
@@ -419,31 +433,33 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
         for (uint256 i = 0; i < recipients.length; i++) {
             _sendTokens(recipients[i], amount);
         }
-        _tokensPurchased += amount * recipients.length;
+        _tokensPurchased = _tokensPurchased.add(amount.mul(recipients.length));
     }
 
     /**
      * @dev Send tokens to recipient per specified wei amount.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param recipient address to send tokens to.
      * @param weiAmount amount of wei.
      */
      function sendTokensPerWei(address recipient, uint256 weiAmount) public onlyAdmin {
+         require(recipient != address(0));
          _sendTokens(recipient, weiToTokens(weiAmount));
-         _tokensPurchased += weiToTokens(weiAmount);
+         _tokensPurchased = _tokensPurchased.add(weiToTokens(weiAmount));
      }
 
      /**
       * @dev Send fixed amount of tokens per wei to list of recipients.
-      * Available only to the admin and owner.
+      * Available only to the admin.
       * @param recipients addresses to send tokens to.
       * @param weiAmount amount of wei.
       */
      function sendTokensPerWeiToList(address[] memory recipients, uint256 weiAmount) public onlyAdmin {
+         require(recipients.length > 0);
          for (uint256 i = 0; i < recipients.length; i++) {
              _sendTokens(recipients[i], weiToTokens(weiAmount));
          }
-         _tokensPurchased += weiToTokens(weiAmount) * recipients.length;
+         _tokensPurchased = _tokensPurchased.add(weiToTokens(weiAmount).mul(recipients.length));
      }
 
     /**
@@ -463,6 +479,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
                      _reserved = USDToWei(_reserveLimit);
                      _reserve = Reserving.OFF;
+                     emit ReserveState(false);
                 } else {
                      _reserved = _reserved.add(weiAmount);
                      _sendETH(_exchange, weiAmount);
@@ -470,6 +487,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
              } else {
                  _sendETH(_wallet, weiAmount);
                  _reserve = Reserving.OFF;
+                 emit ReserveState(false);
              }
          }
      }
@@ -488,17 +506,18 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev finish crowdsale.
-     * Available only to the admin and owner.
-     * Can be called only if hardcap is reached ot ending time has passed.
+     * Available only to the admin.
+     * Can be called only if hardcap is reached or ending time has passed.
      */
     function finishSale() public onlyAdmin {
-        require(_tokensPurchased >= _hardcap || block.timestamp >= _endTime);
+        require(isEnded());
 
         _token.mint(_wallet, _token.hardcap().sub(_tokensPurchased));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
         Exchange(_exchange).finish();
 
+        emit StateChanged(state, 1);
         state = State.Usual;
     }
 
@@ -549,7 +568,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the rate.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newRate new value.
      */
     function setRate(uint256 newRate) external onlyAdmin {
@@ -560,18 +579,19 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the PriceProvider address.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param provider new address.
      */
     function setEthPriceProvider(address provider) external onlyAdmin {
         require(provider != address(0), "New parameter value is the zero address");
+        require(isContract(provider);
 
         _priceProvider = provider;
     }
 
     /**
      * @dev Function to change the address to receive ether.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newWallet new address.
      */
     function setWallet(address payable newWallet) external onlyAdmin {
@@ -582,7 +602,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the address of team.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newTeamAddr new address.
      */
     function setTeamAddr(address payable newTeamAddr) external onlyAdmin {
@@ -593,7 +613,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the Exchange address.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newExchange new address.
      */
     function setExchangeAddr(address payable newExchange) external onlyAdmin {
@@ -604,7 +624,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the ETH Price.
-     * Available only to the admin and owner and to the PriceProvider.
+     * Available only to the admin and to the PriceProvider.
      * @param newPrice amount of USD Cents for 1 ether.
      */
     function setETHPrice(uint256 newPrice) external {
@@ -617,7 +637,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the USD decimals.
-     * Available only to the admin and owner and to the PriceProvider.
+     * Available only to the admin and to the PriceProvider.
      * @param newDecimals amount of numbers after decimal point.
      */
     function setDecimals(uint256 newDecimals) external {
@@ -629,8 +649,8 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the end time.
-     * Available only to the admin and owner.
-     * @param newTime amount of numbers after decimal point.
+     * Available only to the admin.
+     * @param newTime UNIX time of ending of crowdsale.
      */
     function setEndTime(uint256 newTime) external onlyAdmin {
         require(newTime != 0, "New parameter value is 0");
@@ -640,18 +660,17 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the bonus percent.
-     * Available only to the admin and owner.
-     * @param newPercent amount of numbers after decimal point.
+     * Available only to the admin.
+     * @param newPercent new bonus percent.
      */
     function setBonusPercent(uint256 newPercent) external onlyAdmin {
-        require(newPercent != 0, "New parameter value is 0");
 
         _bonusPercent = newPercent;
     }
 
     /**
      * @dev Function to change the hardcap.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newCap new hardcap value.
      */
     function setHardCap(uint256 newCap) external onlyAdmin {
@@ -662,7 +681,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the minimum amount (wei).
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newMinimum new minimum value (wei).
      */
     function setMinimum(uint256 newMinimum) external onlyAdmin {
@@ -673,7 +692,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the reserve Limit (USD).
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newResLimitUSD new value (USD).
      */
     function setReserveLimit(uint256 newResLimitUSD) external onlyAdmin {
@@ -684,7 +703,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change the reserve trigger value (tokens).
-     * Available only to the admin and owner.
+     * Available only to the admin.
      * @param newReserveTrigger new value (tokens).
      */
     function setReserveTrigger(uint256 newReserveTrigger) external onlyAdmin {
@@ -695,33 +714,41 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
 
     /**
      * @dev Function to change activate whitelist state.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      */
     function switchWhitelist() external onlyAdmin {
+        require(state != State.Whitelist);
+        emit StateChanged(state, 2);
         state = State.Whitelist;
     }
 
     /**
      * @dev Function to change activate private sale state.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      */
     function switchPrivateSale() external onlyAdmin {
+        require(state != State.PrivateSale);
+        emit StateChanged(state, 3);
         state = State.PrivateSale;
     }
 
     /**
      * @dev Function to change activate closed state.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      */
     function switchClosed() external onlyAdmin {
+        require(state != State.Closed);
+        emit StateChanged(state, 4);
         state = State.Closed;
     }
 
     /**
      * @dev Function to change activate usual state.
-     * Available only to the admin and owner.
+     * Available only to the admin.
      */
     function switchUsual() external onlyAdmin {
+        require(state != State.Usual);
+        emit StateChanged(state, 1);
         state = State.Usual;
     }
 
@@ -733,6 +760,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
         uint256 amount = BTLToken(ERC20Token).balanceOf(address(this));
+        require(amount > 0);
         BTLToken(ERC20Token).transfer(recipient, amount);
 
     }
@@ -749,6 +777,13 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
      */
     function wallet() public view returns (address payable) {
         return _wallet;
+    }
+
+    /**
+     * @return the bonus address where bonuses are collected.
+     */
+    function bonusAddr() public view returns (address) {
+        return _bonusAddr;
     }
 
     /**
@@ -782,8 +817,15 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     /**
      * @return the price of 1 ether in USD Cents.
      */
-    function currentETHPrice() public view returns (uint256 price, uint256 decimals) {
-        return(_currentETHPrice, _decimals);
+    function currentETHPrice() public view returns (uint256 price) {
+        return(_currentETHPrice);
+    }
+
+    /**
+     * @return the the number of decimals of ETH Price.
+     */
+    function currentETHPriceDecimals() public view returns (uint256 decimals) {
+        return(_decimals);
     }
 
     /**
@@ -862,4 +904,21 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, PrivateListRole {
     function isAdmin(address account) public view returns (bool) {
         return _token.isAdmin(account);
     }
+
+    /**
+     * @return true if the address is a сontract.
+     */
+    function isContract(address addr) internal view returns (bool) {
+        uint size;
+        assembly { size := extcodesize(addr) }
+        return size > 0;
+    }
+
+    /**
+     * @return true if hardcap is reached or endtime has passed.
+     */
+    function isEnded() public view returns (bool) {
+        return (_tokensPurchased >= _hardcap || block.timestamp >= _endTime);
+    }
+
 }
