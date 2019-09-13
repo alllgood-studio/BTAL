@@ -514,7 +514,7 @@ contract BTLToken is LockableToken {
      */
     function transferOwnership(address newOwner) public {
         removeAdmin(msg.sender);
-        removeMinter(msg.sender)
+        removeMinter(msg.sender);
         super.transferOwnership(newOwner);
         addAdmin(newOwner);
         addMinter(newOwner);
@@ -524,7 +524,7 @@ contract BTLToken is LockableToken {
      * @dev upgraded addMinter function:
      * Give to address admin and minter roles.
      * Available only to the owner.
-     * @param newOwner Address of new owner.
+     * @param account Address of new minter.
      */
     function addMinter(address account) public {
         super.addMinter(account);
@@ -601,9 +601,9 @@ contract BTLToken is LockableToken {
      * @param amount the amount of tokens to be minted.
      */
     function mint(address account, uint256 amount) public returns (bool) {
-        require(_totalSupply.add(amount) <= _hardcap);
+        require(totalSupply().add(amount) <= _hardcap);
 
-        return super._mint(account, amount);
+        return super.mint(account, amount);
 
     }
 

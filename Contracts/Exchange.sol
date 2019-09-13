@@ -100,7 +100,7 @@ contract Exchange {
 
     function acceptETH() public payable {
         _balance += msg.value;
-        BalanceIncreased(msg.sender, msg.value);
+        emit BalanceIncreased(msg.sender, msg.value);
     }
 
     function receiveApproval(address payable from, uint256 amount, address token, bytes calldata extraData) external {

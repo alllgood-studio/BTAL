@@ -58,6 +58,7 @@ interface BTLToken {
  * @title Exchange interface
  */
  interface Exchange {
+     function acceptETH() external payable;
      function enlisted(address account) external view returns(bool);
      function finish() external;
  }
@@ -277,7 +278,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     event Payout(address indexed recipient, uint256 weiAmount, uint256 usdAmount);
     event BonusPayed(address indexed beneficiary, uint256 amount);
     event ReserveState(bool isActive);
-    event StateChanged(uint256 previousState, uint256 actualState);
+    event StateChanged(string currentState);
 
     // time controller
     modifier active() {
@@ -368,13 +369,13 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
 
         if (_tokensPurchased.add(tokens).add(bonusAmount) > _hardcap) {
             tokens = (_hardcap.sub(_tokensPurchased)).mul(10000).div(10000 + _bonusPercent);
-            bonusAmount = (_hardcap.sub(_tokensPurchased).sub(tokens);
+            bonusAmount = _hardcap.sub(_tokensPurchased).sub(tokens);
             weiAmount = tokensToWei(tokens);
             _sendETH(msg.sender, msg.value.sub(weiAmount));
         }
 
         if (bonusAmount > 0) {
-            _token.mint(_bonusAddr, bonusAmount)
+            _token.mint(_bonusAddr, bonusAmount);
             emit BonusPayed(beneficiary, bonusAmount);
         }
 
@@ -517,7 +518,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _token.release();
         Exchange(_exchange).finish();
 
-        emit StateChanged(state, 1);
+        emit StateChanged("Usual");
         state = State.Usual;
     }
 
@@ -584,7 +585,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function setEthPriceProvider(address provider) external onlyAdmin {
         require(provider != address(0), "New parameter value is the zero address");
-        require(isContract(provider);
+        require(isContract(provider));
 
         _priceProvider = provider;
     }
@@ -718,7 +719,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function switchWhitelist() external onlyAdmin {
         require(state != State.Whitelist);
-        emit StateChanged(state, 2);
+        emit StateChanged("Whitelist");
         state = State.Whitelist;
     }
 
@@ -728,7 +729,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function switchPrivateSale() external onlyAdmin {
         require(state != State.PrivateSale);
-        emit StateChanged(state, 3);
+        emit StateChanged("PrivateSale");
         state = State.PrivateSale;
     }
 
@@ -738,7 +739,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function switchClosed() external onlyAdmin {
         require(state != State.Closed);
-        emit StateChanged(state, 4);
+        emit StateChanged("Closed");
         state = State.Closed;
     }
 
@@ -748,7 +749,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function switchUsual() external onlyAdmin {
         require(state != State.Usual);
-        emit StateChanged(state, 1);
+        emit StateChanged("Usual");
         state = State.Usual;
     }
 
