@@ -507,17 +507,12 @@ contract BTLToken is LockableToken {
     }
 
     /**
-     * @dev upgraded addMinter function:
-     * Give to address admin and minter roles.
-     * Available only to the owner.
-     * @param account Address of new minter.
+     * @dev upgraded isAdmin function:
+     * @return true if account is owner/minter/admin.
      */
-    function addMinter(address account) public {
-        super.addMinter(account);
-        if (!isAdmin(msg.sender)) {
-            addAdmin(account);
-        }
-    }
+     function isAdmin(address account) public view returns (bool) {
+         return(super.isAdmin(account) || isMinter(account));
+     }
 
     /**
      * @dev set exchange address.
