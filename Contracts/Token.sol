@@ -1,4 +1,4 @@
-pragma solidity 0.5.7;
+pragma solidity 0.5.11;
 
 /**
  * @title SafeMath
@@ -135,7 +135,7 @@ contract AdminRole is Ownable {
     }
 
     function isAdmin(address account) public view returns (bool) {
-        return(_admins.has(account));
+        return(_admins.has(account) || isOwner(account));
     }
 
     function addAdmin(address account) public onlyOwner {
@@ -507,20 +507,6 @@ contract BTLToken is LockableToken {
     }
 
     /**
-     * @dev upgraded transferOwnership function:
-     * Transfers ownership of the contract to a new account (`newOwner`) and give to it admin and minter roles.
-     * Available only to the owner.
-     * @param newOwner Address of new owner.
-     */
-    function transferOwnership(address newOwner) public {
-        removeAdmin(msg.sender);
-        removeMinter(msg.sender);
-        super.transferOwnership(newOwner);
-        addAdmin(newOwner);
-        addMinter(newOwner);
-    }
-
-    /**
      * @dev upgraded addMinter function:
      * Give to address admin and minter roles.
      * Available only to the owner.
@@ -528,7 +514,9 @@ contract BTLToken is LockableToken {
      */
     function addMinter(address account) public {
         super.addMinter(account);
-        addAdmin(account);
+        if (!isAdmin(msg.sender)) {
+            addAdmin(account);
+        }
     }
 
     /**
