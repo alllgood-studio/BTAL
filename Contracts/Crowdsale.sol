@@ -64,16 +64,6 @@ interface IBTLToken {
  }
 
 /**
- * @title PriceReceiver interface
- * @dev Inherit from PriceReceiver to use the PriceProvider contract.
- */
-interface IPriceReceiver {
-    function setETHPrice(uint256 newPrice) external;
-    function setDecimals(uint256 newDecimals) external;
-    function setEthPriceProvider(address provider) external;
-}
-
-/**
  * @dev Contract module that helps prevent reentrant calls to a function.
  */
 contract ReentrancyGuard {
@@ -226,6 +216,8 @@ contract EnlistedRole {
 contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     using SafeMath for uint256;
 
+    address internal _initAddress;
+
     // The token being sold
     IBTLToken private _token;
 
@@ -296,6 +288,10 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _;
     }
 
+    constructor() public {
+        _initAddress = msg.sender;
+    }
+
     /**
      * @dev iniialize start variables.
      * Can be called once.
@@ -310,8 +306,9 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         IBTLToken token,
         uint256 endTime,
         uint256 hardcap
-        ) public onlyAdmin {
+        ) public {
 
+        require(msg.sender == _initAddress);
         require(address(_token) == address(0));
 
         require(rate != 0, "Rate is 0");
@@ -333,7 +330,6 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _token = token;
         _endTime = endTime;
         _hardcap = hardcap;
-
     }
 
     /**
@@ -368,7 +364,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         uint256 bonusAmount = tokens.mul(_bonusPercent).div(10000);
 
         if (_tokensPurchased.add(tokens).add(bonusAmount) > _hardcap) {
-            tokens = (_hardcap.sub(_tokensPurchased)).mul(10000).div(10000 + _bonusPercent);
+            tokens = (_hardcap.sub(_tokensPurchased)).mul(10000).div(_bonusPercent.add(10000));
             bonusAmount = _hardcap.sub(_tokensPurchased).sub(tokens);
             weiAmount = tokensToWei(tokens);
             _sendETH(msg.sender, msg.value.sub(weiAmount));
@@ -386,7 +382,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
             ) {
             _reserve = Reserving.ON;
             emit ReserveState(true);
-            uint256 unreservedWei = tokensToWei(_reserveTrigger - _tokensPurchased);
+            uint256 unreservedWei = tokensToWei(_reserveTrigger.sub(_tokensPurchased));
             _sendETH(_wallet, unreservedWei);
             refund(weiAmount.sub(unreservedWei));
         } else {
@@ -395,7 +391,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
 
         _token.mint(beneficiary, tokens);
 
-        _tokensPurchased += tokens;
+        _tokensPurchased = _tokensPurchased.add(tokens);
         _weiRaised = _weiRaised.add(weiAmount);
 
         emit TokensPurchased(msg.sender, beneficiary, weiAmount, tokens);
@@ -475,7 +471,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
 
                      uint256 reservedWei = USDToWei(_reserveLimit).sub(_reserved);
                      _sendETH(_exchange, reservedWei);
-                     uint256 unreservedWei = weiAmount - reservedWei;
+                     uint256 unreservedWei = weiAmount.sub(reservedWei);
                      _sendETH(_wallet, unreservedWei);
 
                      _reserved = USDToWei(_reserveLimit);
