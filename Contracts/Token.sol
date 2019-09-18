@@ -486,7 +486,7 @@ contract BTLToken is LockableToken {
      */
     constructor(address recipient, address initialOwner) public Ownable(initialOwner) {
 
-        mint(recipient, INITIAL_SUPPLY);
+        _mint(recipient, INITIAL_SUPPLY);
 
     }
 
