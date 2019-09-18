@@ -38,7 +38,7 @@ library SafeMath {
 /**
  * @title BTLToken interface
  */
-interface BTLToken {
+interface IBTLToken {
     function transfer(address to, uint256 value) external returns (bool);
     function transferFrom(address from, address to, uint256 value) external returns (bool);
     function balanceOf(address who) external view returns (uint256);
@@ -49,7 +49,7 @@ interface BTLToken {
 /**
  * @title Crowdsale interface
  */
-interface Crowdsale {
+interface ICrowdsale {
     function reserved() external view returns (uint256);
     function reserveLimit() external view returns (uint256);
     function reserveTrigger() external view returns (uint256);
@@ -62,8 +62,8 @@ interface Crowdsale {
 contract Exchange {
     using SafeMath for uint256;
 
-    BTLToken public BTL;
-    Crowdsale public crowdsale;
+    IBTLToken public BTL;
+    ICrowdsale public crowdsale;
 
     address payable private _reserveAddress;
 
@@ -88,8 +88,8 @@ contract Exchange {
     constructor(address BTLAddr, address crowdsaleAddr, address payable reserveAddress) public {
         require(BTLAddr != address(0) && crowdsaleAddr != address(0) && reserveAddress != address(0));
 
-        BTL = BTLToken(BTLAddr);
-        crowdsale = Crowdsale(crowdsaleAddr);
+        BTL = IBTLToken(BTLAddr);
+        crowdsale = ICrowdsale(crowdsaleAddr);
         _reserveAddress = reserveAddress;
         _balance = address(this).balance;
     }
@@ -128,14 +128,14 @@ contract Exchange {
     function setCrowdsaleAddr(address addr) public onlyAdmin {
         require(addr != address(0));
         require(isContract(addr));
-        crowdsale = Crowdsale(addr);
+        crowdsale = ICrowdsale(addr);
     }
 
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
-        uint256 amount = BTLToken(ERC20Token).balanceOf(address(this));
+        uint256 amount = IBTLToken(ERC20Token).balanceOf(address(this));
         require(amount > 0);
-        BTLToken(ERC20Token).transfer(recipient, amount);
+        IBTLToken(ERC20Token).transfer(recipient, amount);
 
     }
 

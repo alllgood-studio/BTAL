@@ -200,7 +200,7 @@ interface IERC20 {
 /**
  * @title Crowdsale interface
  */
-interface Crowdsale {
+interface ICrowdsale {
     function hardcap() external view returns (uint256);
     function isEnded() external view returns(bool);
 }
@@ -208,7 +208,7 @@ interface Crowdsale {
 /**
  * @title Exchange interface
  */
- interface Exchange {
+ interface IExchange {
      function enlisted(address account) external view returns(bool);
      function reserveAddress() external view returns(address payable);
  }
@@ -217,7 +217,7 @@ interface Crowdsale {
  * @title ApproveAndCall Interface.
  * @dev ApproveAndCall system allows to communicate with smart-contracts.
  */
-interface ApproveAndCallFallBack {
+interface IApproveAndCallFallBack {
     function receiveApproval(address from, uint256 amount, address token, bytes calldata extraData) external;
 }
 
@@ -324,8 +324,8 @@ contract LockableToken is ERC20Mintable, AdminRole {
     bool private _released;
 
     // crowdsale address
-    Crowdsale internal _crowdsale;
-    Exchange internal _exchange;
+    ICrowdsale internal _crowdsale;
+    IExchange internal _exchange;
 
     // variables to store info about locked addresses
     mapping (address => bool) private _unlocked;
@@ -361,13 +361,11 @@ contract LockableToken is ERC20Mintable, AdminRole {
 
         if (address(_crowdsale) != address(0)) {
             removeMinter(address(_crowdsale));
-            removeAdmin(address(_crowdsale));
         }
 
         addMinter(addr);
-        addAdmin(addr);
 
-        _crowdsale = Crowdsale(addr);
+        _crowdsale = ICrowdsale(addr);
     }
 
     /**
@@ -417,7 +415,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
     function release() external onlyAdmin {
         if (address(_crowdsale) != address(0)) {
             require(_crowdsale.isEnded());
-            _crowdsale = Crowdsale(address(0));
+            _crowdsale = ICrowdsale(address(0));
         }
         _released = true;
     }
@@ -501,7 +499,7 @@ contract BTLToken is LockableToken {
     function approveAndCall(address spender, uint256 amount, bytes memory extraData) public returns (bool) {
         require(approve(spender, amount));
 
-        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, amount, address(this), extraData);
+        IApproveAndCallFallBack(spender).receiveApproval(msg.sender, amount, address(this), extraData);
 
         return true;
     }
@@ -522,7 +520,7 @@ contract BTLToken is LockableToken {
     function setExchangeAddr(address addr) external onlyAdmin {
         registerContract(addr);
 
-        _exchange = Exchange(addr);
+        _exchange = IExchange(addr);
     }
 
     /**
@@ -570,7 +568,7 @@ contract BTLToken is LockableToken {
     function transferFrom(address from, address to, uint256 value) public returns (bool) {
 
         if (_contracts[to] && !_contracts[msg.sender]) {
-            ApproveAndCallFallBack(to).receiveApproval(msg.sender, value, address(this), new bytes(0));
+            IApproveAndCallFallBack(to).receiveApproval(msg.sender, value, address(this), new bytes(0));
         } else {
             super.transferFrom(from, to, value);
         }

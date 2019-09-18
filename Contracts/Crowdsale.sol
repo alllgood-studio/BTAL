@@ -43,7 +43,7 @@ library SafeMath {
 /**
  * @title token interface
  */
-interface BTLToken {
+interface IBTLToken {
     function transfer(address to, uint256 value) external returns (bool);
     function balanceOf(address who) external view returns (uint256);
     function mint(address account, uint256 amount) external returns (bool);
@@ -57,7 +57,7 @@ interface BTLToken {
 /**
  * @title Exchange interface
  */
- interface Exchange {
+ interface IExchange {
      function acceptETH() external payable;
      function enlisted(address account) external view returns(bool);
      function finish() external;
@@ -67,7 +67,7 @@ interface BTLToken {
  * @title PriceReceiver interface
  * @dev Inherit from PriceReceiver to use the PriceProvider contract.
  */
-interface PriceReceiver {
+interface IPriceReceiver {
     function setETHPrice(uint256 newPrice) external;
     function setDecimals(uint256 newDecimals) external;
     function setEthPriceProvider(address provider) external;
@@ -139,7 +139,7 @@ contract WhitelistedRole {
 
     Roles.Role private _whitelisteds;
 
-    BTLToken private _token;
+    IBTLToken private _token;
 
     modifier onlyAdmin() {
         require(_token.isAdmin(msg.sender), "Caller has no permission");
@@ -186,7 +186,7 @@ contract EnlistedRole {
 
     Roles.Role private _enlisted;
 
-    BTLToken private _token;
+    IBTLToken private _token;
 
     modifier onlyAdmin() {
         require(_token.isAdmin(msg.sender));
@@ -227,7 +227,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     using SafeMath for uint256;
 
     // The token being sold
-    BTLToken private _token;
+    IBTLToken private _token;
 
     // Address where funds are collected
     address payable private _wallet;
@@ -307,7 +307,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         address payable wallet,
         address teamAddr,
         address payable exchange,
-        BTLToken token,
+        IBTLToken token,
         uint256 endTime,
         uint256 hardcap
         ) public onlyAdmin {
@@ -497,7 +497,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
          require(recipient != address(0));
 
          if (recipient == _exchange) {
-             Exchange(_exchange).acceptETH.value(weiAmount)();
+             IExchange(_exchange).acceptETH.value(weiAmount)();
          } else {
              recipient.transfer(weiAmount);
          }
@@ -516,7 +516,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _token.mint(_wallet, _token.hardcap().sub(_tokensPurchased));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
-        Exchange(_exchange).finish();
+        IExchange(_exchange).finish();
 
         emit StateChanged("Usual");
         state = State.Usual;
@@ -760,16 +760,16 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     */
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
-        uint256 amount = BTLToken(ERC20Token).balanceOf(address(this));
+        uint256 amount = IBTLToken(ERC20Token).balanceOf(address(this));
         require(amount > 0);
-        BTLToken(ERC20Token).transfer(recipient, amount);
+        IBTLToken(ERC20Token).transfer(recipient, amount);
 
     }
 
     /**
      * @return the token being sold.
      */
-    function token() public view returns (BTLToken) {
+    function token() public view returns (IBTLToken) {
         return _token;
     }
 
