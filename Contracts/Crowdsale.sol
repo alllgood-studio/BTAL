@@ -216,6 +216,7 @@ contract EnlistedRole {
 contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     using SafeMath for uint256;
 
+    // deployer
     address internal _initAddress;
 
     // The token being sold
@@ -288,13 +289,16 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _;
     }
 
+    /**
+     * @dev constructor function, sets address of deployer.
+     */
     constructor() public {
         _initAddress = msg.sender;
     }
 
     /**
      * @dev iniialize start variables.
-     * Can be called once.
+     * Can be called once only by address who comitted deploy.
      */
     function init(
         uint256 rate,
