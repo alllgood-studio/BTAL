@@ -378,6 +378,7 @@ contract LockableToken is ERC20Mintable, AdminRole {
     function lock(address account, uint256 amount, uint256 time) external onlyAdmin {
         require(account != address(0) && amount != 0);
         _locked[account] = Lock(amount, block.timestamp.add(time));
+        _unlocked[account] = false;
     }
 
     /**

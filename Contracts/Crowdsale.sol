@@ -150,10 +150,9 @@ contract WhitelistedRole {
         emit WhitelistedAdded(account);
     }
 
-    function addListToWhitelisted(address[] memory accounts) public onlyAdmin {
+    function addListToWhitelisted(address[] memory accounts) public {
         for (uint256 i = 0; i < accounts.length; i++) {
-            _whitelisteds.add(accounts[i]);
-            emit WhitelistedAdded(accounts[i]);
+            addWhitelisted(accounts[i]);
         }
     }
 
@@ -197,10 +196,9 @@ contract EnlistedRole {
         emit EnlistedAdded(account);
     }
 
-    function addListToEnlisted(address[] memory accounts) public onlyAdmin {
+    function addListToEnlisted(address[] memory accounts) public {
         for (uint256 i = 0; i < accounts.length; i++) {
-            _enlisted.add(accounts[i]);
-            emit EnlistedAdded(accounts[i]);
+            addEnlisted(accounts[i]);
         }
     }
 
@@ -285,7 +283,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
 
     // token admin checker
     modifier onlyAdmin() {
-        require(_token.isAdmin(msg.sender));
+        require(isAdmin(msg.sender));
         _;
     }
 
@@ -444,7 +442,6 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param weiAmount amount of wei.
      */
      function sendTokensPerWei(address recipient, uint256 weiAmount) public onlyAdmin {
-         require(recipient != address(0));
          _sendTokens(recipient, weiToTokens(weiAmount));
          _tokensPurchased = _tokensPurchased.add(weiToTokens(weiAmount));
      }
@@ -527,7 +524,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param weiAmount Value in wei to be converted into tokens
      * @return Number of tokens that can be purchased with the specified weiAmount
      */
-    function weiToTokens(uint256 weiAmount) public view returns(uint256) {
+    function weiToTokens(uint256 weiAmount) internal view returns(uint256) {
         return weiAmount.mul(_currentETHPrice).mul(_rate).div(10**_decimals).div(1 ether);
     }
 
@@ -536,7 +533,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param tokenAmount amount of tokens
      * @return wei amount that one need to send to buy the specified tokenAmount
      */
-    function tokensToWei(uint256 tokenAmount) public view returns(uint256) {
+    function tokensToWei(uint256 tokenAmount) internal view returns(uint256) {
         return tokenAmount.mul(1 ether).mul(10**_decimals).div(_rate).div(_currentETHPrice);
     }
 
@@ -545,7 +542,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param weiAmount amount of tokens
      * @return USD amount
      */
-    function weiToUSD(uint256 weiAmount) public view returns(uint256) {
+    function weiToUSD(uint256 weiAmount) internal view returns(uint256) {
         return weiAmount.mul(_currentETHPrice).div(10**_decimals).div(1 ether);
     }
 
@@ -554,7 +551,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param USDAmount amount of USD
      * @return wei amount
      */
-    function USDToWei(uint256 USDAmount) public view returns(uint256) {
+    function USDToWei(uint256 USDAmount) internal view returns(uint256) {
         return USDAmount.mul(1 ether).mul(10**_decimals).div(_currentETHPrice);
     }
 
@@ -563,7 +560,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param tokenAmount amount of tokens
      * @return USD amount that one need to send to buy the specified tokenAmount
      */
-    function tokensToUSD(uint256 tokenAmount) public view returns(uint256) {
+    function tokensToUSD(uint256 tokenAmount) internal view returns(uint256) {
         return weiToUSD(tokensToWei(tokenAmount));
     }
 
@@ -630,7 +627,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      */
     function setETHPrice(uint256 newPrice) external {
         require(newPrice != 0, "New parameter value is 0");
-        require(msg.sender == _priceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
+        require(msg.sender == _priceProvider || isAdmin(msg.sender), "Sender has no permission");
 
         emit NewETHPrice(_currentETHPrice, newPrice, _decimals);
         _currentETHPrice = newPrice;
@@ -642,8 +639,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param newDecimals amount of numbers after decimal point.
      */
     function setDecimals(uint256 newDecimals) external {
-        require(newDecimals != 0, "New parameter value is 0");
-        require(msg.sender == _priceProvider || _token.isAdmin(msg.sender), "Sender has no permission");
+        require(msg.sender == _priceProvider || isAdmin(msg.sender), "Sender has no permission");
 
         _decimals = newDecimals;
     }
@@ -895,14 +891,14 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     /**
      * @return true if caller is owner.
      */
-    function isOwner(address account) public view returns (bool) {
+    function isOwner(address account) internal view returns (bool) {
         return _token.isOwner(account);
     }
 
     /**
      * @return true if caller is admin.
      */
-    function isAdmin(address account) public view returns (bool) {
+    function isAdmin(address account) internal view returns (bool) {
         return _token.isAdmin(account);
     }
 
