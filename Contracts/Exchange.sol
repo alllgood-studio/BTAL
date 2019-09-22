@@ -36,9 +36,9 @@ library SafeMath {
 }
 
 /**
- * @title BTLToken interface
+ * @title BTALToken interface
  */
-interface IBTLToken {
+interface IBTALToken {
     function transfer(address to, uint256 value) external returns (bool);
     function transferFrom(address from, address to, uint256 value) external returns (bool);
     function balanceOf(address who) external view returns (uint256);
@@ -62,7 +62,7 @@ interface ICrowdsale {
 contract Exchange {
     using SafeMath for uint256;
 
-    IBTLToken public BTL;
+    IBTALToken public BTAL;
     ICrowdsale public crowdsale;
 
     address payable private _reserveAddress;
@@ -72,23 +72,23 @@ contract Exchange {
     modifier inActiveState() {
         require(
             crowdsale.reserved() >= crowdsale.reserveLimit()
-            && !BTL.released()
+            && !BTAL.released()
             );
         _;
     }
 
     modifier onlyAdmin() {
-        require(BTL.isAdmin(msg.sender), "Caller has no permission");
+        require(BTAL.isAdmin(msg.sender), "Caller has no permission");
         _;
     }
 
     event Exchanged(address user, uint256 tokenAmount, uint256 weiAmount);
     event BalanceIncreased(address user, uint256 amount);
 
-    constructor(address BTLAddr, address crowdsaleAddr, address payable reserveAddress) public {
-        require(BTLAddr != address(0) && crowdsaleAddr != address(0) && reserveAddress != address(0));
+    constructor(address BTALAddr, address crowdsaleAddr, address payable reserveAddress) public {
+        require(BTALAddr != address(0) && crowdsaleAddr != address(0) && reserveAddress != address(0));
 
-        BTL = IBTLToken(BTLAddr);
+        BTAL = IBTALToken(BTALAddr);
         crowdsale = ICrowdsale(crowdsaleAddr);
         _reserveAddress = reserveAddress;
         _balance = address(this).balance;
@@ -104,14 +104,14 @@ contract Exchange {
     }
 
     function receiveApproval(address payable from, uint256 amount, address token, bytes calldata extraData) external {
-        require(token == address(BTL));
+        require(token == address(BTAL));
         exchange(from, amount);
     }
 
     function exchange(address payable account, uint256 amount) public inActiveState {
         require(crowdsale.isEnlisted(account));
-        BTL.transferFrom(account, address(this), amount);
-        BTL.transfer(_reserveAddress, amount);
+        BTAL.transferFrom(account, address(this), amount);
+        BTAL.transfer(_reserveAddress, amount);
 
         uint256 weiAmount = getETHAmount(amount);
 
@@ -121,7 +121,7 @@ contract Exchange {
     }
 
     function finish() public onlyAdmin {
-        require(BTL.released());
+        require(BTAL.released());
         _reserveAddress.transfer(address(this).balance);
     }
 
@@ -133,9 +133,9 @@ contract Exchange {
 
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
-        uint256 amount = IBTLToken(ERC20Token).balanceOf(address(this));
+        uint256 amount = IBTALToken(ERC20Token).balanceOf(address(this));
         require(amount > 0);
-        IBTLToken(ERC20Token).transfer(recipient, amount);
+        IBTALToken(ERC20Token).transfer(recipient, amount);
 
     }
 

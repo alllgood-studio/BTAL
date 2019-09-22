@@ -459,12 +459,12 @@ contract LockableToken is ERC20Mintable, AdminRole {
 /**
  * @title The main project contract.
  */
-contract BTLToken is LockableToken {
+contract BTALToken is LockableToken {
 
     // name of the token
     string private _name = "Bital Token";
     // symbol of the token
-    string private _symbol = "BTL";
+    string private _symbol = "BTAL";
     // decimals of the token
     uint8 private _decimals = 18;
 

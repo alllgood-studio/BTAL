@@ -43,7 +43,7 @@ library SafeMath {
 /**
  * @title token interface
  */
-interface IBTLToken {
+interface IBTALToken {
     function transfer(address to, uint256 value) external returns (bool);
     function balanceOf(address who) external view returns (uint256);
     function mint(address account, uint256 amount) external returns (bool);
@@ -59,7 +59,6 @@ interface IBTLToken {
  */
  interface IExchange {
      function acceptETH() external payable;
-     function enlisted(address account) external view returns(bool);
      function finish() external;
  }
 
@@ -129,7 +128,7 @@ contract WhitelistedRole {
 
     Roles.Role private _whitelisteds;
 
-    IBTLToken private _token;
+    IBTALToken private _token;
 
     modifier onlyAdmin() {
         require(_token.isAdmin(msg.sender), "Caller has no permission");
@@ -175,7 +174,7 @@ contract EnlistedRole {
 
     Roles.Role private _enlisted;
 
-    IBTLToken private _token;
+    IBTALToken private _token;
 
     modifier onlyAdmin() {
         require(_token.isAdmin(msg.sender));
@@ -218,7 +217,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     address internal _initAddress;
 
     // The token being sold
-    IBTLToken private _token;
+    IBTALToken private _token;
 
     // Address where funds are collected
     address payable private _wallet;
@@ -303,9 +302,10 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         uint256 initialETHPrice,
         uint256 decimals,
         address payable wallet,
+        address bonusAddr;
         address teamAddr,
         address payable exchange,
-        IBTLToken token,
+        IBTALToken token,
         uint256 endTime,
         uint256 hardcap
         ) public {
@@ -316,7 +316,8 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         require(rate != 0, "Rate is 0");
         require(initialETHPrice != 0, "Initial ETH price is 0");
         require(wallet != address(0), "Wallet is the zero address");
-        require(teamAddr != address(0), "teamAddr is the zero address");
+        require(bonusAddr != address(0), "BonusAddr is the zero address");
+        require(teamAddr != address(0), "TeamAddr is the zero address");
         require(isContract(address(token)), "Token is not a contract");
         require(isContract(exchange), "Exchange is not a contract");
         require(endTime != 0, "EndTime is 0");
@@ -327,6 +328,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _currentETHPrice = initialETHPrice;
         _decimals = decimals;
         _wallet = wallet;
+        _bonusAddr = bonusAddr;
         _teamAddr = teamAddr;
         _exchange = exchange;
         _token = token;
@@ -429,6 +431,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @param amount amount of tokens.
      */
     function sendTokensToList(address[] memory recipients, uint256 amount) public onlyAdmin {
+        require(recipients.length > 0);
         for (uint256 i = 0; i < recipients.length; i++) {
             _sendTokens(recipients[i], amount);
         }
@@ -599,6 +602,18 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     }
 
     /**
+     * @dev Function to change the BonusAddr address.
+     * Available only to the admin.
+     * @param newBonusAddr new address.
+     */
+    function setBonusAddr(address newBonusAddr) external onlyAdmin {
+        require(newBonusAddr != address(0), "New parameter value is the zero address");
+
+        _bonusAddr = newBonusAddr;
+    }
+
+
+    /**
      * @dev Function to change the address of team.
      * Available only to the admin.
      * @param newTeamAddr new address.
@@ -756,16 +771,16 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     */
     function withdrawERC20(address ERC20Token, address recipient) external onlyAdmin {
 
-        uint256 amount = IBTLToken(ERC20Token).balanceOf(address(this));
+        uint256 amount = IBTALToken(ERC20Token).balanceOf(address(this));
         require(amount > 0);
-        IBTLToken(ERC20Token).transfer(recipient, amount);
+        IBTALToken(ERC20Token).transfer(recipient, amount);
 
     }
 
     /**
      * @return the token being sold.
      */
-    function token() public view returns (IBTLToken) {
+    function token() public view returns (IBTALToken) {
         return _token;
     }
 
