@@ -1,8 +1,8 @@
-# BTL Token smart contracts
+# BTAL Token smart contracts
 
 *	_Standard_ : [ERC20](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md)
 * _[Name](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md#name)_ : Bital Token
-*	_[Ticker](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md#symbol)_ : BTL
+*	_[Ticker](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md#symbol)_ : BTAL
 *	_[Decimals](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md#decimals)_ : 18
 *	_Crowdsales_ : 1
 
@@ -16,7 +16,7 @@ Admins can modify every contract variables, so for current information see “Re
 
 ### Contracts contains
 
-1.	BTLToken
+1.	BTALToken
 2.	CrowdSale
 3.	Exchange
 4.	PriceProvider
@@ -30,7 +30,7 @@ To start working with contract you should follow next steps:
 First, Token contract.
 Second, Crowdsale. To activate crowdsale one needs to call “setCrowdsale” function at Token contract.
 Third, Exchange. To activate exchange one needs to call “setExchangeAddr” function at Crowdsale contract and “registerContract” at Token.
-Do not forget that only Admins and unlocked wallets can transfer BTL, when tokens are not released. To start presale you need to send tokens to presale address and make it to be transfer agent.
+Do not forget that only Admins and unlocked wallets can transfer BTAL, when tokens are not released. To start presale you need to send tokens to presale address and make it to be transfer agent.
 To allow address change eth/usd rate you need to make address (wallet or contract) be Provider by calling setPriceProvider.
 
 ### How to invest
