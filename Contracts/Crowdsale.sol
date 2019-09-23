@@ -304,7 +304,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         uint256 initialETHPrice,
         uint256 decimals,
         address payable wallet,
-        address bonusAddr;
+        address bonusAddr,
         address teamAddr,
         address payable exchange,
         IBTALToken token,
