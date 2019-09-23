@@ -46,6 +46,7 @@ library SafeMath {
 interface IBTALToken {
     function transfer(address to, uint256 value) external returns (bool);
     function balanceOf(address who) external view returns (uint256);
+    function totalSupply() external view returns (uint256);
     function mint(address account, uint256 amount) external returns (bool);
     function lock(address account, uint256 amount, uint256 time) external;
     function release() external;
@@ -60,6 +61,7 @@ interface IBTALToken {
  interface IExchange {
      function acceptETH() external payable;
      function finish() external;
+     function reserveAddress() external view returns(address payable);
  }
 
 /**
@@ -513,7 +515,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     function finishSale() public onlyAdmin {
         require(isEnded());
 
-        _token.mint(_wallet, _token.hardcap().sub(_tokensPurchased));
+        _token.mint(_exchange.reserveAddress(), _token.hardcap().sub(_token.totalSupply()));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
         IExchange(_exchange).finish();

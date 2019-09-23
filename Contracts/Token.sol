@@ -519,6 +519,7 @@ contract BTALToken is LockableToken {
      * @param addr Exchange address.
      */
     function setExchangeAddr(address addr) external onlyAdmin {
+        require(isContract(addr));
         registerContract(addr);
 
         _exchange = IExchange(addr);
