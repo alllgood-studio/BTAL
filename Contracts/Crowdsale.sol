@@ -223,7 +223,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
 
     // Address where funds are collected
     address payable private _wallet;
-    address payable private _exchange;
+    address payable private _exchangeAddr;
     address private _bonusAddr;
     address private _teamAddr;
     address private _priceProvider;
@@ -332,7 +332,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
         _wallet = wallet;
         _bonusAddr = bonusAddr;
         _teamAddr = teamAddr;
-        _exchange = exchange;
+        _exchangeAddr = exchange;
         _token = token;
         _endTime = endTime;
         _hardcap = hardcap;
@@ -476,7 +476,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
                  if (weiToUSD(_reserved.add(weiAmount)) >= _reserveLimit) {
 
                      uint256 reservedWei = USDToWei(_reserveLimit).sub(_reserved);
-                     _sendETH(_exchange, reservedWei);
+                     _sendETH(_exchangeAddr, reservedWei);
                      uint256 unreservedWei = weiAmount.sub(reservedWei);
                      _sendETH(_wallet, unreservedWei);
 
@@ -485,7 +485,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
                      emit ReserveState(false);
                 } else {
                      _reserved = _reserved.add(weiAmount);
-                     _sendETH(_exchange, weiAmount);
+                     _sendETH(_exchangeAddr, weiAmount);
                 }
              } else {
                  _sendETH(_wallet, weiAmount);
@@ -498,8 +498,8 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      function _sendETH(address payable recipient, uint256 weiAmount) internal {
          require(recipient != address(0));
 
-         if (recipient == _exchange) {
-             IExchange(_exchange).acceptETH.value(weiAmount)();
+         if (recipient == _exchangeAddr) {
+             IExchange(_exchangeAddr).acceptETH.value(weiAmount)();
          } else {
              recipient.transfer(weiAmount);
          }
@@ -515,10 +515,10 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     function finishSale() public onlyAdmin {
         require(isEnded());
 
-        _token.mint(IExchange(_exchange).reserveAddress(), _token.hardcap().sub(_token.totalSupply()));
+        _token.mint(IExchange(_exchangeAddr).reserveAddress(), _token.hardcap().sub(_token.totalSupply()));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
-        IExchange(_exchange).finish();
+        IExchange(_exchangeAddr).finish();
 
         emit StateChanged("Usual");
         state = State.Usual;
@@ -634,7 +634,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     function setExchangeAddr(address payable newExchange) external onlyAdmin {
         require(newExchange != address(0), "New parameter value is the zero address");
 
-        _exchange = newExchange;
+        _exchangeAddr = newExchange;
     }
 
     /**
@@ -811,7 +811,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
      * @return the address of exchange contract.
      */
     function exchange() public view returns (address payable) {
-        return _exchange;
+        return _exchangeAddr;
     }
 
     /**
