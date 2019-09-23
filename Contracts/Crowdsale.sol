@@ -515,7 +515,7 @@ contract Crowdsale is ReentrancyGuard, WhitelistedRole, EnlistedRole {
     function finishSale() public onlyAdmin {
         require(isEnded());
 
-        _token.mint(_exchange.reserveAddress(), _token.hardcap().sub(_token.totalSupply()));
+        _token.mint(IExchange(_exchange).reserveAddress(), _token.hardcap().sub(_token.totalSupply()));
         _token.lock(_teamAddr, _token.balanceOf(_teamAddr), 31536000);
         _token.release();
         IExchange(_exchange).finish();
